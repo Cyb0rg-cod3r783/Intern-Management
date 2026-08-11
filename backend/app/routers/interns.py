@@ -28,6 +28,7 @@ from app.middleware.rbac import (
 from app.services.auth_service import hash_password, is_allowed_domain
 from app.services.crypto_service import encrypt_optional, decrypt_optional
 from app.services.audit_service import log_action
+from app.services.notification_service import notify_admins
 
 router = APIRouter(prefix="/interns", tags=["Interns"])
 
@@ -211,6 +212,7 @@ def create_intern(
         end_date=body.end_date,
         remarks=body.remarks,
         personal_email=body.personal_email,
+        personal_phone=body.personal_phone,
         marital_status=body.marital_status,
         stipend_amount=body.stipend_amount,
         stipend_type=body.stipend_type,
@@ -251,7 +253,7 @@ def update_intern(
         for field in ["new_tk_id", "old_tk_id", "department_id", "reporting_manager_id",
                       "title", "category", "location", "internship_type", "duration",
                       "joining_date", "end_date", "status", "remarks",
-                      "personal_email", "marital_status", "stipend_amount",
+                      "personal_email", "personal_phone", "marital_status", "stipend_amount",
                       "stipend_type", "is_paid", "bank_name", "bank_ifsc", "payment_info_extra"]:
             val = getattr(parsed, field, None)
             if val is not None:
@@ -262,6 +264,14 @@ def update_intern(
             log_action(db, str(current_user.id), AuditAction.EDIT_STIPEND,
                        target_type="intern", target_id=intern_id,
                        metadata={"field": "bank_account_number"})
+
+        if parsed.bank_account_number is not None or parsed.stipend_amount is not None or parsed.personal_email is not None:
+            intern_name = profile.user.full_name if profile.user else "Intern"
+            notify_admins(
+                db, "🔒 Sensitive Data Alert",
+                f"{current_user.full_name} updated sensitive records for {intern_name}.",
+                "SENSITIVE_DATA", f"/admin/interns/{intern_id}"
+            )
 
         log_action(db, str(current_user.id), AuditAction.EDIT_INTERN,
                    target_type="intern", target_id=intern_id)

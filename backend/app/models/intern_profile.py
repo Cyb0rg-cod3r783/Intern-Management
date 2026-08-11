@@ -49,6 +49,7 @@ class InternProfile(Base):
     # ── [ADMIN-ONLY] Sensitive Personal Information ───────────────────────────
     # These fields are NEVER returned to Manager or Intern roles.
     personal_email = Column(String, nullable=True)         # [ADMIN-ONLY]
+    personal_phone = Column(String, nullable=True)         # [ADMIN-ONLY]
     marital_status = Column(String, nullable=True)         # [ADMIN-ONLY]
 
     # ── [ADMIN-ONLY] Financial Information ────────────────────────────────────

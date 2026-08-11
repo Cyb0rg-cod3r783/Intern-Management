@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Enum as SAEnum
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -16,6 +16,9 @@ class User(Base):
     full_name = Column(String, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # Department assignment (primarily for Managers — links a manager to their department)
+    department_id = Column(UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True)
+
     # Authentication fields
     google_sub = Column(String, unique=True, nullable=True)   # Google OAuth subject ID
     password_hash = Column(String, nullable=True)             # Fallback email/password
@@ -24,6 +27,7 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
+    department = relationship("Department", foreign_keys=[department_id])
     intern_profile = relationship(
         "InternProfile", back_populates="user",
         foreign_keys="InternProfile.user_id", uselist=False
@@ -40,3 +44,4 @@ class User(Base):
 
     def __repr__(self):
         return f"<User {self.company_email} ({self.role})>"
+

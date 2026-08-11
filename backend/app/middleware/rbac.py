@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, UserRole
 from app.services.auth_service import decode_access_token
+from app.services.token_blacklist import is_token_blacklisted
 import uuid
 
 bearer_scheme = HTTPBearer()
@@ -33,6 +34,12 @@ def get_current_user(
 ) -> User:
     """Extract and validate the JWT bearer token → return the authenticated User."""
     token = credentials.credentials
+    if is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session has been logged out or revoked.",
+        )
+
     payload = decode_access_token(token)
 
     if not payload:

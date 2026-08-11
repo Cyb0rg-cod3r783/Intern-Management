@@ -4,6 +4,7 @@ from app.models.intern_profile import InternProfile
 from app.models.task import Task, TaskUpdate
 from app.models.handover import Handover
 from app.models.audit_log import AuditLog
+from app.models.notification import Notification
 from app.models.enums import (
     UserRole, InternStatus, TaskStatus, TaskPriority,
     HandoverStatus, AuditAction
@@ -17,6 +18,7 @@ __all__ = [
     "TaskUpdate",
     "Handover",
     "AuditLog",
+    "Notification",
     "UserRole",
     "InternStatus",
     "TaskStatus",

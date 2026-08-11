@@ -12,6 +12,7 @@ from app.middleware.rbac import (
     assert_can_manage_handover,
 )
 from app.services.audit_service import log_action
+from app.services.notification_service import notify
 
 router = APIRouter(prefix="/handovers", tags=["Handovers"])
 
@@ -140,4 +141,13 @@ def update_handover(
     log_action(db, str(current_user.id), action,
                target_type="handover", target_id=handover_id)
     db.commit()
+
+    if body.status and h.receiving_person_id:
+        notify(
+            db, h.receiving_person_id, "🔄 Handover Status Updated",
+            f"Handover status updated to {h.status.value}",
+            "HANDOVER_STATUS", "/manager/handovers"
+        )
+        db.commit()
+
     return _build_handover_out(h)

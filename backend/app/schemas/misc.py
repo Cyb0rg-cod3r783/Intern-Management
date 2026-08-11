@@ -26,6 +26,7 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    department_id: Optional[UUID] = None
     created_at: datetime
 
 
@@ -35,6 +36,16 @@ class UserCreateRequest(BaseModel):
     full_name: str
     role: str  # ADMIN, MANAGER
     initial_password: Optional[str] = None
+    department_id: Optional[UUID] = None
+
+
+class UserUpdateRequest(BaseModel):
+    """Admin-only: update user account details."""
+    company_email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    department_id: Optional[UUID] = None
+    is_active: Optional[bool] = None
 
 
 class DepartmentCreateRequest(BaseModel):

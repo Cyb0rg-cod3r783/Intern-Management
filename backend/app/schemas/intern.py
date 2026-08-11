@@ -114,6 +114,7 @@ class InternProfileAdmin(BaseModel):
 
     # [ADMIN-ONLY] Sensitive personal information
     personal_email: Optional[str] = None
+    personal_phone: Optional[str] = None
     marital_status: Optional[str] = None
 
     # [ADMIN-ONLY] Financial
@@ -153,6 +154,7 @@ class InternCreateRequest(BaseModel):
 
     # Sensitive — Admin only
     personal_email: Optional[str] = None
+    personal_phone: Optional[str] = None
     marital_status: Optional[str] = None
     stipend_amount: Optional[Decimal] = None
     stipend_type: Optional[str] = None
@@ -183,6 +185,7 @@ class InternUpdateAdminRequest(BaseModel):
     status: Optional[InternStatus] = None
     remarks: Optional[str] = None
     personal_email: Optional[str] = None
+    personal_phone: Optional[str] = None
     marital_status: Optional[str] = None
     stipend_amount: Optional[Decimal] = None
     stipend_type: Optional[str] = None

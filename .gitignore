@@ -1,0 +1,26 @@
+# Credentials & Sensitive files
+Admin_credentials.txt
+*.pem
+*.key
+.env
+.env.local
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+backend/venv/
+backend/.env
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

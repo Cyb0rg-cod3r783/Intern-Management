@@ -9,7 +9,9 @@ from app.services.auth_service import (
     create_access_token,
     is_allowed_domain,
     hash_password,
+    change_user_password,
 )
+from app.services.token_blacklist import blacklist_token
 from app.services.audit_service import log_action
 from app.models.enums import AuditAction
 from app.middleware.rbac import get_current_user
@@ -23,6 +25,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 
 class TokenResponse(BaseModel):
@@ -44,9 +51,13 @@ def user_to_dict(user: User) -> dict:
     }
 
 
+from app.middleware.rate_limiter import check_rate_limit
+
+
 @router.post("/login", response_model=TokenResponse)
 def email_password_login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
     """Email/password login — company email only."""
+    check_rate_limit(request)
     if not is_allowed_domain(body.email):
         raise HTTPException(status_code=400, detail="Only @talakunchi.com and @talakunchi.in emails are permitted.")
 
@@ -104,3 +115,31 @@ def get_google_oauth_url():
 def get_me(current_user: User = Depends(get_current_user)):
     """Return the current user's identity."""
     return user_to_dict(current_user)
+
+
+@router.put("/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change current user's password."""
+    try:
+        change_user_password(db, current_user, body.old_password, body.new_password)
+        return {"message": "Password updated successfully."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/logout")
+def logout(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Blacklist the current bearer token to revoke session."""
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        blacklist_token(token)
+    log_action(db, str(current_user.id), AuditAction.LOGOUT, ip_address=request.client.host if request.client else None)
+    db.commit()
+    return {"message": "Successfully logged out."}
+
+

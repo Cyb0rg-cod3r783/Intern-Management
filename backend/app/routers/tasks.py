@@ -13,6 +13,7 @@ from app.middleware.rbac import (
     assert_can_manage_task,
 )
 from app.services.audit_service import log_action
+from app.services.notification_service import notify, notify_admins
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -124,13 +125,13 @@ def create_task(
     db: Session = Depends(get_db),
 ):
     if current_user.role == UserRole.INTERN:
-        # Intern can only self-assign
+        # Intern can only self-assign and cannot set due_date
         body.intern_id = current_user.id
+        body.due_date = None
     elif not body.intern_id:
         raise HTTPException(status_code=400, detail="intern_id is required when creating a task as Admin or Manager.")
 
     intern_profile = _get_intern_profile(db, str(body.intern_id))
-
 
     if current_user.role == UserRole.MANAGER:
         if str(intern_profile.reporting_manager_id) != str(current_user.id):
@@ -153,6 +154,16 @@ def create_task(
                metadata={"intern_id": str(body.intern_id), "title": body.title})
     db.commit()
     db.refresh(task)
+
+    # Trigger: Notify Intern about new task assigned by Manager/Admin
+    if current_user.role in (UserRole.ADMIN, UserRole.MANAGER):
+        notify(
+            db, body.intern_id, "📋 New Task Assigned",
+            f"Assigned task: '{task.title}' by {current_user.full_name}",
+            "NEW_TASK", f"/intern/tasks/{task.id}"
+        )
+        db.commit()
+
     return _build_task_out(_load_task(db, str(task.id)))
 
 
@@ -168,6 +179,12 @@ def update_task(
     intern_profile = _get_intern_profile(db, str(task.intern_id))
     assert_can_manage_task(current_user, task, intern_profile)
 
+    old_status = task.status
+
+    if current_user.role == UserRole.INTERN:
+        # Interns cannot update due_date
+        body.due_date = None
+
     for field in ["title", "description", "due_date", "status", "priority",
                   "evidence_link", "completed_date"]:
         val = getattr(body, field, None)
@@ -177,6 +194,27 @@ def update_task(
     log_action(db, str(current_user.id), AuditAction.UPDATE_TASK,
                target_type="task", target_id=task_id)
     db.commit()
+
+    # Trigger: Task status change notifications
+    if old_status != task.status:
+        intern_name = task.intern.full_name if task.intern else "Intern"
+        if task.status == TaskStatus.COMPLETED:
+            # Trigger: Task completed -> notify Manager
+            if intern_profile.reporting_manager_id:
+                notify(
+                    db, intern_profile.reporting_manager_id, "✅ Task Completed",
+                    f"{intern_name} completed task: '{task.title}'",
+                    "TASK_COMPLETED", "/manager/tasks"
+                )
+        elif task.status == TaskStatus.BLOCKED:
+            # Trigger: Task blocked -> notify Admins
+            notify_admins(
+                db, "🚫 Task Blocked Alert",
+                f"{intern_name}'s task '{task.title}' was marked as BLOCKED.",
+                "BLOCKED_TASK", "/admin/tasks"
+            )
+        db.commit()
+
     return _build_task_out(_load_task(db, task_id))
 
 
@@ -190,6 +228,7 @@ def add_progress_update(
 ):
     """Add a progress/activity note to a task."""
     task = _load_task(db, task_id)
+    intern_profile = _get_intern_profile(db, str(task.intern_id))
 
     if current_user.role == UserRole.INTERN:
         if str(task.intern_id) != str(current_user.id):
@@ -206,4 +245,23 @@ def add_progress_update(
                metadata={"type": "progress_update"})
     db.commit()
     db.refresh(update)
+
+    # Trigger notifications based on update author
+    if current_user.role == UserRole.INTERN:
+        # Trigger: Intern update -> notify Manager
+        if intern_profile.reporting_manager_id:
+            notify(
+                db, intern_profile.reporting_manager_id, "📝 Intern Posted Update",
+                f"{current_user.full_name} posted a note on '{task.title}'",
+                "INTERN_UPDATE", "/manager/tasks"
+            )
+    else:
+        # Trigger: Manager feedback -> notify Intern
+        notify(
+            db, task.intern_id, "💬 New Manager Feedback",
+            f"{current_user.full_name} commented on '{task.title}'",
+            "MANAGER_FEEDBACK", f"/intern/tasks/{task.id}"
+        )
+    db.commit()
+
     return {"id": str(update.id), "message": "Progress update added."}

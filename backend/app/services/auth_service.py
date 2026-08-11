@@ -31,6 +31,20 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(pwd_bytes, hash_bytes)
 
 
+def change_user_password(db: Session, user: User, old_password: str, new_password: str) -> None:
+    """Change an authenticated user's password."""
+    if user.password_hash:
+        if not verify_password(old_password, user.password_hash):
+            raise ValueError("Current password is incorrect.")
+
+    if not new_password or len(new_password) < 6:
+        raise ValueError("New password must be at least 6 characters long.")
+
+    user.password_hash = hash_password(new_password)
+    log_action(db, str(user.id), AuditAction.PASSWORD_CHANGED, metadata={"email": user.company_email})
+    db.commit()
+
+
 
 # ─── JWT helpers ───────────────────────────────────────────────────────────────
 
