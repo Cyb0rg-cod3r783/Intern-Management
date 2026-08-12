@@ -33,9 +33,9 @@ class InternProfile(Base):
     department_id = Column(UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True)
     reporting_manager_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     title = Column(String, nullable=True)
-    category = Column(String, nullable=True)
+    category = Column(String, default="intern", nullable=True)
     location = Column(String, nullable=True)
-    internship_type = Column(String, nullable=True)
+    internship_type = Column(String, default="paid", nullable=True)
     duration = Column(String, nullable=True)
 
     # ── Dates ────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ class InternProfile(Base):
     # ── [ADMIN-ONLY] Financial Information ────────────────────────────────────
     # Bank account number is AES-256 encrypted via crypto_service.
     stipend_amount = Column(Numeric(10, 2), nullable=True)  # [ADMIN-ONLY]
-    stipend_type = Column(String, nullable=True)            # [ADMIN-ONLY] monthly/weekly/one-time
+    stipend_type = Column(String, default="monthly", nullable=True) # [ADMIN-ONLY] monthly
     is_paid = Column(Boolean, default=False, nullable=True) # [ADMIN-ONLY]
     bank_account_number_encrypted = Column(LargeBinary, nullable=True)  # [ADMIN-ONLY] AES-256
     bank_name = Column(String, nullable=True)               # [ADMIN-ONLY]

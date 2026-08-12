@@ -12,7 +12,7 @@ import csv
 import io
 
 from app.database import get_db
-from app.models import User, UserRole, InternProfile, Task, Department, AuditAction
+from app.models import User, UserRole, InternProfile, Task, Department, AuditAction, Notification, Handover
 from app.models.enums import InternStatus, TaskStatus
 from app.middleware.rbac import require_admin, require_manager
 
@@ -192,7 +192,7 @@ def update_user(
     if body.is_active is not None:
         user.is_active = body.is_active
 
-    log_action(db, str(current_user.id), AuditAction.USER_CREATED,
+    log_action(db, str(current_user.id), AuditAction.UPDATE_USER,
                target_type="user", target_id=user_id,
                metadata={"email": user.company_email, "action": "update_user"})
     db.commit()
@@ -488,6 +488,10 @@ async def bulk_import_interns(
         }
 
     # 3. Batch Create Records
+    from app.models.intern_approval_request import InternApprovalRequest
+    from app.models.enums import InternStatus as IS
+    from app.services.notification_service import notify
+
     created_count = 0
     for item in validated_data:
         u = User(
@@ -499,6 +503,9 @@ async def bulk_import_interns(
         )
         db.add(u)
         db.flush()
+
+        # Match single-intern logic: PENDING_APPROVAL if dept/manager given
+        initial_status = IS.PENDING_APPROVAL if (item["department_id"] or item["reporting_manager_id"]) else IS.ACTIVE
 
         prof = InternProfile(
             user_id=u.id,
@@ -515,13 +522,36 @@ async def bulk_import_interns(
             personal_email=item["personal_email"],
             personal_phone=item["personal_phone"],
             stipend_amount=item["stipend_amount"],
+            status=initial_status,
         )
         db.add(prof)
+        db.flush()
+
+        # Create approval request if dept/manager assigned
+        if initial_status == IS.PENDING_APPROVAL:
+            approval_req = InternApprovalRequest(
+                intern_id=prof.id,
+                request_type="ONBOARDING",
+                target_department_id=item["department_id"],
+                requested_by_id=current_user.id,
+                assigned_manager_id=item["reporting_manager_id"],
+                status="PENDING",
+            )
+            db.add(approval_req)
+            # Notify the assigned manager
+            if item["reporting_manager_id"]:
+                notify(
+                    db, item["reporting_manager_id"],
+                    "New Intern Onboarding Request",
+                    f"New intern '{u.full_name}' was bulk-imported. Please review and accept/decline.",
+                    "APPROVAL_REQUEST", "/manager/dashboard"
+                )
+
         created_count += 1
 
     log_action(db, str(current_user.id), AuditAction.USER_CREATED,
                metadata={"type": "bulk_import", "count": created_count})
-    notify_admins(db, "👥 Bulk Intern Import Completed",
+    notify_admins(db, "Bulk Intern Import Completed",
                   f"{created_count} new intern accounts were imported by {current_user.full_name}.",
                   "ACCOUNT_CREATED", "/admin/interns")
     db.commit()
@@ -530,4 +560,38 @@ async def bulk_import_interns(
         "success": True,
         "created_count": created_count,
         "message": f"Successfully imported {created_count} interns!"
+    }
+
+
+# ─── Bulk Delete Interns ───────────────────────────────────────────────────────
+@router.post("/interns/bulk-delete", status_code=status.HTTP_200_OK)
+def bulk_delete_interns(
+    payload: dict,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: bulk delete multiple interns permanently."""
+    from app.routers.interns import _delete_intern_cascading
+
+    user_ids = payload.get("user_ids", [])
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="No user IDs provided for bulk deletion.")
+
+    deleted_count = 0
+    for uid in user_ids:
+        target_uid_str = str(uid)
+        _delete_intern_cascading(db, target_uid_str)
+        deleted_count += 1
+
+    log_action(db, str(current_user.id), AuditAction.USER_DELETED,
+               metadata={"type": "bulk_delete", "count": deleted_count})
+    notify_admins(db, "🗑️ Bulk Intern Deletion Completed",
+                  f"{deleted_count} intern account(s) were permanently deleted by {current_user.full_name}.",
+                  "ACCOUNT_DELETED", "/admin/interns")
+
+    db.commit()
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": f"Successfully deleted {deleted_count} intern(s)."
     }

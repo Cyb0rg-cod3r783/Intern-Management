@@ -23,6 +23,8 @@ class TaskOut(BaseModel):
     intern_name: str = ""
     assigned_by_id: Optional[UUID] = None
     assigned_by_name: str = ""
+    project_id: Optional[UUID] = None
+    project_name: str = ""
     title: str
     description: Optional[str] = None
     assigned_date: Optional[date] = None
@@ -39,6 +41,7 @@ class TaskOut(BaseModel):
 
 class TaskCreateRequest(BaseModel):
     intern_id: Optional[UUID] = None
+    project_id: Optional[UUID] = None
     title: str
 
     description: Optional[str] = None
@@ -52,6 +55,7 @@ class TaskCreateRequest(BaseModel):
 class TaskUpdateRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    project_id: Optional[UUID] = None
     due_date: Optional[date] = None
     status: Optional[TaskStatus] = None
     priority: Optional[TaskPriority] = None

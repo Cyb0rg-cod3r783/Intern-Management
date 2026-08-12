@@ -12,15 +12,18 @@ from typing import List, Optional
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import User, UserRole, InternProfile, AuditAction
+from app.models import User, UserRole, InternProfile, AuditAction, AuditLog, Notification, Task, TaskUpdate, Handover, InternApprovalRequest, InternHistoryLog, Project, project_interns
+from app.models.enums import InternStatus, TaskStatus
 from app.schemas.intern import (
     InternProfileAdmin, InternProfileManager, InternProfileIntern,
     InternCreateRequest, InternUpdateAdminRequest, InternUpdateManagerRequest,
     DepartmentOut, ManagerRef,
 )
+from app.schemas.history import InternHistoryLogOut, InternHistoryResponse, ProjectHistoryItem, TaskHistorySummary, PerformedByRef
 from app.middleware.rbac import (
     get_current_user, require_admin, require_admin_or_manager,
     assert_can_edit_intern,
@@ -28,7 +31,8 @@ from app.middleware.rbac import (
 from app.services.auth_service import hash_password, is_allowed_domain
 from app.services.crypto_service import encrypt_optional, decrypt_optional
 from app.services.audit_service import log_action
-from app.services.notification_service import notify_admins
+from app.services.notification_service import notify, notify_admins
+from app.services.history_service import record_history_log, detect_and_record_profile_changes
 
 router = APIRouter(prefix="/interns", tags=["Interns"])
 
@@ -63,6 +67,12 @@ def _build_intern_response(profile: InternProfile) -> InternProfileIntern:
 
 
 def _load_profile(db: Session, intern_id: str) -> InternProfile:
+    """Load profile by either profile ID or user ID for maximum endpoint compatibility."""
+    try:
+        target_uuid = uuid.UUID(intern_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Invalid intern ID format.")
+
     profile = (
         db.query(InternProfile)
         .options(
@@ -70,7 +80,7 @@ def _load_profile(db: Session, intern_id: str) -> InternProfile:
             joinedload(InternProfile.department),
             joinedload(InternProfile.reporting_manager),
         )
-        .filter(InternProfile.user_id == uuid.UUID(intern_id))
+        .filter(or_(InternProfile.id == target_uuid, InternProfile.user_id == target_uuid))
         .first()
     )
     if not profile:
@@ -197,6 +207,9 @@ def create_intern(
     # Create profile with encrypted bank data
     bank_encrypted = encrypt_optional(body.bank_account_number)
 
+    # Initial status is PENDING_APPROVAL if department/manager assigned, else ACTIVE
+    initial_status = InternStatus.PENDING_APPROVAL if (body.department_id or body.reporting_manager_id) else InternStatus.ACTIVE
+
     profile = InternProfile(
         user_id=new_user.id,
         new_tk_id=body.new_tk_id,
@@ -210,6 +223,7 @@ def create_intern(
         duration=body.duration,
         joining_date=body.joining_date,
         end_date=body.end_date,
+        status=initial_status,
         remarks=body.remarks,
         personal_email=body.personal_email,
         personal_phone=body.personal_phone,
@@ -223,10 +237,53 @@ def create_intern(
         payment_info_extra=body.payment_info_extra,
     )
     db.add(profile)
+    db.flush()
+
+    if initial_status == InternStatus.PENDING_APPROVAL:
+        # Create approval request for manager
+        approval_req = InternApprovalRequest(
+            intern_id=profile.id,
+            request_type="ONBOARDING",
+            target_department_id=body.department_id,
+            requested_by_id=current_user.id,
+            assigned_manager_id=body.reporting_manager_id,
+            status="PENDING",
+        )
+        db.add(approval_req)
+
+        # Notify Manager(s)
+        managers_to_notify = []
+        if body.reporting_manager_id:
+            mgr = db.query(User).filter(User.id == body.reporting_manager_id).first()
+            if mgr:
+                managers_to_notify.append(mgr)
+        elif body.department_id:
+            managers_to_notify = db.query(User).filter(
+                User.role == UserRole.MANAGER, User.department_id == body.department_id
+            ).all()
+
+        for mgr in managers_to_notify:
+            notify(
+                db, mgr.id, "⏳ New Intern Onboarding Request",
+                f"New intern '{new_user.full_name}' was onboarded. Please review and accept/decline department placement.",
+                "APPROVAL_REQUEST", "/manager/dashboard"
+            )
 
     log_action(db, str(current_user.id), AuditAction.CREATE_INTERN,
                target_type="intern", target_id=str(new_user.id),
                metadata={"email": body.company_email})
+
+    record_history_log(
+        db,
+        intern_profile_id=profile.id,
+        user_id=new_user.id,
+        event_type="ONBOARDING",
+        title="Intern Account Created & Onboarded",
+        description=f"Intern account for {new_user.full_name} created by {current_user.full_name}.",
+        new_value=initial_status.value,
+        performed_by_id=current_user.id,
+    )
+
     db.commit()
     db.refresh(profile)
 
@@ -246,8 +303,49 @@ def update_intern(
     profile = _load_profile(db, intern_id)
     assert_can_edit_intern(current_user, profile)
 
+    # Snapshot old state for history tracking
+    old_data = {
+        "category": profile.category or "intern",
+        "internship_type": profile.internship_type or "paid",
+        "end_date": profile.end_date,
+        "duration": profile.duration,
+        "stipend_amount": profile.stipend_amount,
+        "stipend_type": profile.stipend_type,
+        "department_id": profile.department_id,
+        "reporting_manager_id": profile.reporting_manager_id,
+        "status": profile.status,
+    }
+
     if current_user.role == UserRole.ADMIN:
         parsed = InternUpdateAdminRequest(**body)
+        old_dept_id = profile.department_id
+
+        # Validate Promotion Category Matrix
+        if parsed.category is not None and parsed.category.lower() != (profile.category or "intern").lower():
+            old_cat = (profile.category or "intern").lower()
+            new_cat = parsed.category.lower()
+            valid_targets = {
+                "intern": ["trainee", "contract", "full_time"],
+                "trainee": ["contract", "full_time"],
+                "contract": ["full_time"],
+                "full_time": [],
+            }
+            if new_cat not in valid_targets.get(old_cat, []):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid promotion transition from '{old_cat.upper()}' to '{new_cat.upper()}'. Allowed targets: {[t.upper() for t in valid_targets.get(old_cat, [])]}"
+                )
+            
+            # Enforce Paid requirement for trainee, contract, full_time
+            if new_cat in ["trainee", "contract", "full_time"]:
+                parsed.internship_type = "paid"
+                parsed.is_paid = True
+                if parsed.stipend_amount is None and (profile.stipend_amount is None or profile.stipend_amount <= 0):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Promotion to {new_cat.upper()} requires a valid paid stipend amount (> 0)."
+                    )
+
         if parsed.full_name is not None:
             profile.user.full_name = parsed.full_name
         for field in ["new_tk_id", "old_tk_id", "department_id", "reporting_manager_id",
@@ -258,6 +356,29 @@ def update_intern(
             val = getattr(parsed, field, None)
             if val is not None:
                 setattr(profile, field, val)
+
+        # Trigger department transfer request if department changed by Admin
+        if parsed.department_id is not None and parsed.department_id != old_dept_id:
+            transfer_req = InternApprovalRequest(
+                intern_id=profile.id,
+                request_type="DEPARTMENT_TRANSFER",
+                current_department_id=old_dept_id,
+                target_department_id=parsed.department_id,
+                requested_by_id=current_user.id,
+                assigned_manager_id=parsed.reporting_manager_id,
+                status="PENDING",
+            )
+            db.add(transfer_req)
+
+            target_managers = db.query(User).filter(
+                User.role == UserRole.MANAGER, User.department_id == parsed.department_id
+            ).all()
+            for mgr in target_managers:
+                notify(
+                    db, mgr.id, "🔄 Department Transfer Request",
+                    f"Intern '{profile.user.full_name}' has been requested for transfer into your department.",
+                    "APPROVAL_REQUEST", "/manager/dashboard"
+                )
 
         if parsed.bank_account_number is not None:
             profile.bank_account_number_encrypted = encrypt_optional(parsed.bank_account_number)
@@ -278,16 +399,136 @@ def update_intern(
 
     else:  # MANAGER
         parsed = InternUpdateManagerRequest(**body)
-        for field in ["title", "location", "remarks"]:
+        for field in ["title", "location", "remarks", "end_date", "duration"]:
             val = getattr(parsed, field, None)
             if val is not None:
                 setattr(profile, field, val)
         log_action(db, str(current_user.id), AuditAction.EDIT_INTERN,
                    target_type="intern", target_id=intern_id)
 
+    new_data = {
+        "category": profile.category,
+        "internship_type": profile.internship_type,
+        "end_date": profile.end_date,
+        "duration": profile.duration,
+        "stipend_amount": profile.stipend_amount,
+        "stipend_type": profile.stipend_type,
+        "department_id": profile.department_id,
+        "reporting_manager_id": profile.reporting_manager_id,
+        "status": profile.status,
+    }
+
+    # Record structured history logs for detected changes
+    detect_and_record_profile_changes(db, profile, old_data, new_data, current_user)
+
     db.commit()
     return _build_admin_response(_load_profile(db, intern_id)) if current_user.role == UserRole.ADMIN \
         else _build_manager_response(_load_profile(db, intern_id))
+
+
+# ─── GET /interns/{intern_id}/history ──────────────────────────────────────────
+@router.get("/{intern_id}/history", response_model=InternHistoryResponse)
+def get_intern_history(
+    intern_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get full career and lifecycle history timeline for an intern.
+    - Admin: sees complete history including stipend revision logs.
+    - Manager: sees history for managed intern; stipend revision logs are hidden for privacy.
+    - Intern: sees own non-sensitive history logs.
+    """
+    profile = _load_profile(db, intern_id)
+    u_uuid = profile.user_id
+
+    if current_user.role == UserRole.INTERN:
+        if str(profile.user_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="You can only view your own history.")
+    elif current_user.role == UserRole.MANAGER:
+        if str(profile.reporting_manager_id) != str(current_user.id) and \
+           (not current_user.department_id or str(profile.department_id) != str(current_user.department_id)):
+            raise HTTPException(status_code=403, detail="Access denied. You can only view history for interns in your department or assigned to you.")
+
+    # 1. Fetch History Logs
+    logs_query = (
+        db.query(InternHistoryLog)
+        .options(joinedload(InternHistoryLog.performed_by))
+        .filter(InternHistoryLog.user_id == u_uuid)
+    )
+
+    if current_user.role in (UserRole.MANAGER, UserRole.INTERN):
+        # Filter out stipend / financial sensitive logs for Manager and Intern roles
+        logs_query = logs_query.filter(InternHistoryLog.is_sensitive == False)
+
+    logs = logs_query.order_by(InternHistoryLog.created_at.desc()).all()
+
+    # 2. Fetch Projects Worked On
+    proj_rows = (
+        db.query(Project, project_interns.c.assigned_at)
+        .join(project_interns, Project.id == project_interns.c.project_id)
+        .filter(project_interns.c.user_id == u_uuid)
+        .order_by(project_interns.c.assigned_at.desc())
+        .all()
+    )
+    projects_history = [
+        ProjectHistoryItem(
+            id=p.id,
+            name=p.name,
+            status=p.status,
+            assigned_at=assigned_at,
+        )
+        for p, assigned_at in proj_rows
+    ]
+
+    # 3. Compute Task Summary
+    tasks = db.query(Task).filter(Task.intern_id == u_uuid).all()
+    total_t = len(tasks)
+    completed_t = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+    in_prog_t = sum(1 for t in tasks if t.status == TaskStatus.IN_PROGRESS)
+    blocked_t = sum(1 for t in tasks if t.status == TaskStatus.BLOCKED)
+    overdue_t = sum(1 for t in tasks if t.is_overdue)
+
+    tasks_summary = TaskHistorySummary(
+        total_assigned=total_t,
+        completed=completed_t,
+        in_progress=in_prog_t,
+        blocked=blocked_t,
+        overdue=overdue_t,
+    )
+
+    # 4. Summary Counters
+    extension_count = sum(1 for log in logs if log.event_type == "INTERNSHIP_EXTENSION")
+    dept_transfer_count = sum(1 for log in logs if log.event_type == "DEPARTMENT_TRANSFER")
+    manager_change_count = sum(1 for log in logs if log.event_type == "MANAGER_CHANGE")
+    stipend_revisions_count = sum(1 for log in logs if log.event_type == "STIPEND_REVISION") if current_user.role == UserRole.ADMIN else 0
+
+    summary_dict = {
+        "extension_count": extension_count,
+        "department_transfer_count": dept_transfer_count,
+        "manager_change_count": manager_change_count,
+        "stipend_revisions_count": stipend_revisions_count,
+        "projects_count": len(projects_history),
+        "tasks_completed_count": completed_t,
+        "joining_date": str(profile.joining_date) if profile.joining_date else None,
+        "current_end_date": str(profile.end_date) if profile.end_date else None,
+        "current_status": profile.status.value if isinstance(profile.status, InternStatus) else str(profile.status),
+    }
+
+    # Format output logs
+    formatted_logs = []
+    for l in logs:
+        log_out = InternHistoryLogOut.model_validate(l)
+        if l.performed_by:
+            log_out.performed_by = PerformedByRef.model_validate(l.performed_by)
+        formatted_logs.append(log_out)
+
+    return InternHistoryResponse(
+        summary=summary_dict,
+        projects_history=projects_history,
+        tasks_summary=tasks_summary,
+        logs=formatted_logs,
+    )
 
 
 # ─── DELETE /interns/{intern_id} (deactivate) ─────────────────────────────────
@@ -300,9 +541,74 @@ def deactivate_intern(
     """Admin only: deactivate an intern (soft delete)."""
     profile = _load_profile(db, intern_id)
     profile.user.is_active = False
-    profile.status = "INACTIVE"
+    profile.status = InternStatus.INACTIVE
 
     log_action(db, str(current_user.id), AuditAction.DEACTIVATE_USER,
                target_type="intern", target_id=intern_id)
     db.commit()
     return {"message": "Intern deactivated successfully."}
+
+
+def _delete_intern_cascading(db: Session, target_user_id: str):
+    """Helper to permanently purge an intern and all associated records across all tables."""
+    u_uuid = uuid.UUID(str(target_user_id))
+
+    # 1. Clear approval requests for profile or manager/requester
+    profile = db.query(InternProfile).filter(InternProfile.user_id == u_uuid).first()
+    if profile:
+        db.query(InternApprovalRequest).filter(InternApprovalRequest.intern_id == profile.id).delete(synchronize_session=False)
+    db.query(InternApprovalRequest).filter(
+        (InternApprovalRequest.requested_by_id == u_uuid) | (InternApprovalRequest.assigned_manager_id == u_uuid)
+    ).delete(synchronize_session=False)
+
+    # 2. Clear project_interns association
+    db.execute(project_interns.delete().where(project_interns.c.user_id == u_uuid))
+
+    # 3. Clear task updates
+    user_task_ids = [t[0] for t in db.query(Task.id).filter((Task.intern_id == u_uuid) | (Task.assigned_by_id == u_uuid)).all()]
+    if user_task_ids:
+        db.query(TaskUpdate).filter(TaskUpdate.task_id.in_(user_task_ids)).delete(synchronize_session=False)
+    db.query(TaskUpdate).filter(TaskUpdate.author_id == u_uuid).delete(synchronize_session=False)
+
+    # 4. Clear tasks
+    db.query(Task).filter((Task.intern_id == u_uuid) | (Task.assigned_by_id == u_uuid)).delete(synchronize_session=False)
+
+    # 5. Clear handovers
+    db.query(Handover).filter(
+        (Handover.outgoing_intern_id == u_uuid) | (Handover.receiving_person_id == u_uuid) | (Handover.initiated_by_id == u_uuid)
+    ).delete(synchronize_session=False)
+
+    # 6. Clear notifications (recipient_id)
+    db.query(Notification).filter(Notification.recipient_id == u_uuid).delete(synchronize_session=False)
+
+    # 7. Unlink reporting manager from other profiles if this user was a manager
+    db.query(InternProfile).filter(InternProfile.reporting_manager_id == u_uuid).update({"reporting_manager_id": None}, synchronize_session=False)
+
+    # 8. Unlink actor_id on audit logs to preserve audit trails while allowing user deletion
+    db.query(AuditLog).filter(AuditLog.actor_id == u_uuid).update({"actor_id": None}, synchronize_session=False)
+
+    # 9. Clear intern profile
+    db.query(InternProfile).filter(InternProfile.user_id == u_uuid).delete(synchronize_session=False)
+
+    # 10. Clear user account
+    db.query(User).filter(User.id == u_uuid).delete(synchronize_session=False)
+
+
+@router.delete("/{intern_id}/permanent", status_code=status.HTTP_200_OK)
+def delete_intern_permanently(
+    intern_id: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: permanently delete an intern and purge all records."""
+    profile = _load_profile(db, intern_id)
+    target_user_id = str(profile.user_id)
+
+    log_action(db, str(current_user.id), AuditAction.USER_DELETED,
+               target_type="intern", target_id=target_user_id,
+               metadata={"email": profile.user.company_email, "name": profile.user.full_name})
+
+    _delete_intern_cascading(db, target_user_id)
+    db.commit()
+
+    return {"message": "Intern permanently deleted."}

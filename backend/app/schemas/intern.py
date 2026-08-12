@@ -35,6 +35,15 @@ class ManagerRef(BaseModel):
     company_email: str
 
 
+# ─── Generic User reference (used by projects etc.) ────────────────────────────
+class UserRef(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    full_name: str
+    company_email: str
+    role: str
+
+
 # ─── INTERN role: own profile only ─────────────────────────────────────────────
 class InternProfileIntern(BaseModel):
     """Fields visible to the intern viewing their own profile."""
@@ -198,9 +207,11 @@ class InternUpdateAdminRequest(BaseModel):
 
 class InternUpdateManagerRequest(BaseModel):
     """
-    Manager: only allowed to update operational fields for their own assigned interns.
-    Sensitive fields are excluded from this schema entirely.
+    Manager: allowed to update operational fields, end_date, and duration for their assigned interns.
+    Sensitive financial fields are excluded from this schema.
     """
     title: Optional[str] = None
     location: Optional[str] = None
     remarks: Optional[str] = None
+    end_date: Optional[date] = None
+    duration: Optional[str] = None

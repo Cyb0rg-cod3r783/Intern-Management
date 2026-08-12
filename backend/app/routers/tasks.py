@@ -22,6 +22,7 @@ def _build_task_out(task: Task) -> TaskOut:
     out = TaskOut.model_validate(task)
     out.intern_name = task.intern.full_name if task.intern else ""
     out.assigned_by_name = task.assigned_by.full_name if task.assigned_by else ""
+    out.project_name = task.project.name if task.project else ""
     out.is_overdue = task.is_overdue
     out.updates = [
         TaskUpdateOut(
@@ -43,6 +44,7 @@ def _load_task(db: Session, task_id: str) -> Task:
         .options(
             joinedload(Task.intern),
             joinedload(Task.assigned_by),
+            joinedload(Task.project),
             joinedload(Task.updates).joinedload(TaskUpdate.author),
         )
         .filter(Task.id == uuid.UUID(task_id))
@@ -140,6 +142,7 @@ def create_task(
     task = Task(
         intern_id=body.intern_id,
         assigned_by_id=current_user.id,
+        project_id=body.project_id,
         title=body.title,
         description=body.description,
         assigned_date=body.assigned_date or date.today(),
@@ -185,7 +188,7 @@ def update_task(
         # Interns cannot update due_date
         body.due_date = None
 
-    for field in ["title", "description", "due_date", "status", "priority",
+    for field in ["title", "description", "project_id", "due_date", "status", "priority",
                   "evidence_link", "completed_date"]:
         val = getattr(body, field, None)
         if val is not None:

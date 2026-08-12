@@ -13,6 +13,7 @@ class Task(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     intern_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     assigned_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
 
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
@@ -42,6 +43,7 @@ class Task(Base):
 
 
 
+    project = relationship("Project", back_populates="tasks", foreign_keys=[project_id])
     updates = relationship("TaskUpdate", back_populates="task", order_by="TaskUpdate.created_at")
 
     @property
