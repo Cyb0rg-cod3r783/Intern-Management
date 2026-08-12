@@ -123,6 +123,9 @@ def list_interns(
         query = query.filter(InternProfile.department_id == uuid.UUID(department_id))
     if status_filter:
         query = query.filter(InternProfile.status == status_filter)
+    elif current_user.role == UserRole.MANAGER:
+        # Exclude candidates pending onboarding approval or rejected from Manager's active lists
+        query = query.filter(InternProfile.status.notin_([InternStatus.PENDING_APPROVAL, InternStatus.REJECTED_BY_MANAGER]))
     if manager_id:
         query = query.filter(InternProfile.reporting_manager_id == uuid.UUID(manager_id))
     if search:
@@ -348,17 +351,27 @@ def update_intern(
 
         if parsed.full_name is not None:
             profile.user.full_name = parsed.full_name
-        for field in ["new_tk_id", "old_tk_id", "department_id", "reporting_manager_id",
-                      "title", "category", "location", "internship_type", "duration",
-                      "joining_date", "end_date", "status", "remarks",
-                      "personal_email", "personal_phone", "marital_status", "stipend_amount",
-                      "stipend_type", "is_paid", "bank_name", "bank_ifsc", "payment_info_extra"]:
+
+        # Check if Admin is initiating a department transfer
+        is_transfer_request = (parsed.department_id is not None and str(parsed.department_id) != str(old_dept_id) if old_dept_id else parsed.department_id is not None)
+
+        fields_to_update = ["new_tk_id", "old_tk_id",
+                            "title", "category", "location", "internship_type", "duration",
+                            "joining_date", "end_date", "status", "remarks",
+                            "personal_email", "personal_phone", "marital_status", "stipend_amount",
+                            "stipend_type", "is_paid", "bank_name", "bank_ifsc", "payment_info_extra"]
+
+        # Only update department_id and reporting_manager_id directly if NOT a transfer request needing approval
+        if not is_transfer_request:
+            fields_to_update.extend(["department_id", "reporting_manager_id"])
+
+        for field in fields_to_update:
             val = getattr(parsed, field, None)
             if val is not None:
                 setattr(profile, field, val)
 
         # Trigger department transfer request if department changed by Admin
-        if parsed.department_id is not None and parsed.department_id != old_dept_id:
+        if is_transfer_request:
             transfer_req = InternApprovalRequest(
                 intern_id=profile.id,
                 request_type="DEPARTMENT_TRANSFER",
@@ -376,7 +389,7 @@ def update_intern(
             for mgr in target_managers:
                 notify(
                     db, mgr.id, "🔄 Department Transfer Request",
-                    f"Intern '{profile.user.full_name}' has been requested for transfer into your department.",
+                    f"Intern '{profile.user.full_name}' has been requested for transfer into your department. Please review and accept/decline in Pending Approvals.",
                     "APPROVAL_REQUEST", "/manager/dashboard"
                 )
 
