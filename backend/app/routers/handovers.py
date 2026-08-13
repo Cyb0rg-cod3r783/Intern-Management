@@ -13,6 +13,7 @@ from app.middleware.rbac import (
 )
 from app.services.audit_service import log_action
 from app.services.notification_service import notify
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/handovers", tags=["Handovers"])
 
@@ -30,7 +31,7 @@ def _build_handover_out(h: Handover) -> HandoverOut:
 
 def _get_intern_profile(db: Session, intern_id: str) -> InternProfile:
     profile = db.query(InternProfile).filter(
-        InternProfile.user_id == uuid.UUID(intern_id)
+        InternProfile.user_id == parse_uuid(intern_id, "intern_id")
     ).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Intern not found.")
@@ -69,7 +70,7 @@ def get_handover(
     if current_user.role == UserRole.INTERN:
         raise HTTPException(status_code=403, detail="Access denied.")
 
-    h = db.query(Handover).filter(Handover.id == uuid.UUID(handover_id)).first()
+    h = db.query(Handover).filter(Handover.id == parse_uuid(handover_id, "handover_id")).first()
     if not h:
         raise HTTPException(status_code=404, detail="Handover not found.")
 
@@ -122,7 +123,7 @@ def update_handover(
     current_user: User = Depends(require_admin_or_manager),
     db: Session = Depends(get_db),
 ):
-    h = db.query(Handover).filter(Handover.id == uuid.UUID(handover_id)).first()
+    h = db.query(Handover).filter(Handover.id == parse_uuid(handover_id, "handover_id")).first()
     if not h:
         raise HTTPException(status_code=404, detail="Handover not found.")
 

@@ -12,6 +12,7 @@ from app.middleware.rbac import get_current_user, require_admin_or_manager
 from app.services.audit_service import log_action
 from app.services.notification_service import notify, notify_admins
 from app.services.history_service import record_history_log
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/approvals", tags=["Approvals"])
 
@@ -85,7 +86,7 @@ def accept_approval_request(
             joinedload(InternApprovalRequest.requested_by),
             joinedload(InternApprovalRequest.assigned_manager),
         )
-        .filter(InternApprovalRequest.id == uuid.UUID(request_id))
+        .filter(InternApprovalRequest.id == parse_uuid(request_id, "request_id"))
         .first()
     )
     if not req:
@@ -191,7 +192,7 @@ def reject_approval_request(
             joinedload(InternApprovalRequest.requested_by),
             joinedload(InternApprovalRequest.assigned_manager),
         )
-        .filter(InternApprovalRequest.id == uuid.UUID(request_id))
+        .filter(InternApprovalRequest.id == parse_uuid(request_id, "request_id"))
         .first()
     )
     if not req:

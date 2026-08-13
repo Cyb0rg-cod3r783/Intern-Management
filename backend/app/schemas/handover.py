@@ -2,8 +2,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, List, Any
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from app.models.enums import HandoverStatus
+from app.schemas.task import _validate_safe_url
 
 
 class HandoverOut(BaseModel):
@@ -38,6 +39,9 @@ class HandoverCreateRequest(BaseModel):
     completed_tasks: Optional[Any] = None
     pending_tasks: Optional[Any] = None
 
+    _validate_doc_links = field_validator("doc_links")(_validate_safe_url)
+    _validate_repo_pr_links = field_validator("repo_pr_links")(_validate_safe_url)
+
 
 class HandoverUpdateRequest(BaseModel):
     receiving_person_id: Optional[UUID] = None
@@ -49,3 +53,6 @@ class HandoverUpdateRequest(BaseModel):
     context: Optional[str] = None
     completed_tasks: Optional[Any] = None
     pending_tasks: Optional[Any] = None
+
+    _validate_doc_links = field_validator("doc_links")(_validate_safe_url)
+    _validate_repo_pr_links = field_validator("repo_pr_links")(_validate_safe_url)

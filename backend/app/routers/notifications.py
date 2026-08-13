@@ -11,6 +11,7 @@ from app.models import User, Notification
 from app.middleware.rbac import get_current_user
 from app.schemas.notification import NotificationOut, NotificationListResponse
 from app.services.notification_service import check_and_notify_due_tasks
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -66,7 +67,7 @@ def mark_single_read(
 ):
     """Mark a single notification as read."""
     notif = db.query(Notification).filter(
-        Notification.id == uuid.UUID(notification_id),
+        Notification.id == parse_uuid(notification_id, "notification_id"),
         Notification.recipient_id == current_user.id
     ).first()
     if not notif:

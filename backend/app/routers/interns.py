@@ -33,6 +33,7 @@ from app.services.crypto_service import encrypt_optional, decrypt_optional
 from app.services.audit_service import log_action
 from app.services.notification_service import notify, notify_admins
 from app.services.history_service import record_history_log, detect_and_record_profile_changes
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/interns", tags=["Interns"])
 
@@ -125,7 +126,7 @@ def list_interns(
     )
 
     if department_id:
-        query = query.filter(InternProfile.department_id == uuid.UUID(department_id))
+        query = query.filter(InternProfile.department_id == parse_uuid(department_id, "department_id"))
     elif current_user.role == UserRole.MANAGER:
         # Enforce department isolation: Manager can strictly only view interns in their department or assigned to them
         if current_user.department_id:
@@ -145,7 +146,7 @@ def list_interns(
         query = query.filter(InternProfile.status.notin_([InternStatus.PENDING_APPROVAL, InternStatus.REJECTED_BY_MANAGER]))
 
     if manager_id:
-        query = query.filter(InternProfile.reporting_manager_id == uuid.UUID(manager_id))
+        query = query.filter(InternProfile.reporting_manager_id == parse_uuid(manager_id, "manager_id"))
     if search:
         query = query.filter(
             User.full_name.ilike(f"%{search}%") |

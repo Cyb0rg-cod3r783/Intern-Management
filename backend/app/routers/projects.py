@@ -14,6 +14,7 @@ from app.middleware.rbac import get_current_user, require_admin_or_manager
 from app.services.audit_service import log_action
 from app.services.notification_service import notify
 from app.services.history_service import record_history_log
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -71,7 +72,7 @@ def _load_project(db: Session, project_id: str) -> Project:
             joinedload(Project.department),
             joinedload(Project.interns),
         )
-        .filter(Project.id == uuid.UUID(project_id))
+        .filter(Project.id == parse_uuid(project_id, "project_id"))
         .first()
     )
     if not p:
@@ -131,7 +132,7 @@ def list_projects(
     if status_filter:
         query = query.filter(Project.status == status_filter)
     if department_id:
-        query = query.filter(Project.department_id == uuid.UUID(department_id))
+        query = query.filter(Project.department_id == parse_uuid(department_id, "department_id"))
 
     if current_user.role == UserRole.INTERN:
         query = query.join(project_interns).filter(project_interns.c.user_id == current_user.id)
@@ -160,7 +161,7 @@ def create_project(
         status=body.status or "ACTIVE",
         start_date=body.start_date,
         target_end_date=body.target_end_date,
-        department_id=uuid.UUID(body.department_id) if body.department_id else None,
+        department_id=parse_uuid(body.department_id, "department_id") if body.department_id else None,
     )
     db.add(p)
     log_action(db, str(current_user.id), AuditAction.CREATE_PROJECT,
@@ -199,7 +200,7 @@ def get_project_tasks(
             joinedload(Task.project),
             joinedload(Task.updates).joinedload(TaskUpdate.author),
         )
-        .filter(Task.project_id == uuid.UUID(project_id))
+        .filter(Task.project_id == parse_uuid(project_id, "project_id"))
         .order_by(Task.created_at.desc())
         .all()
     )
@@ -244,7 +245,7 @@ def update_project(
     if body.target_end_date is not None:
         p.target_end_date = body.target_end_date
     if body.department_id is not None:
-        p.department_id = uuid.UUID(body.department_id) if body.department_id else None
+        p.department_id = parse_uuid(body.department_id, "department_id") if body.department_id else None
 
     db.commit()
     return _build_project_out(db, _load_project(db, project_id))
@@ -263,7 +264,7 @@ def assign_interns_to_project(
 
     target_users = (
         db.query(User)
-        .filter(User.id.in_([uuid.UUID(uid) for uid in body.user_ids]))
+        .filter(User.id.in_([parse_uuid(uid, "user_id") for uid in body.user_ids]))
         .all()
     ) if body.user_ids else []
 

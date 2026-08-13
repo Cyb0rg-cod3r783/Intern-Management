@@ -1,7 +1,9 @@
 from datetime import date, datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
+
+from app.schemas.task import _validate_safe_url
 
 
 class DailyLogEntryCreateRequest(BaseModel):
@@ -11,6 +13,8 @@ class DailyLogEntryCreateRequest(BaseModel):
     description: Optional[str] = None
     evidence_link: Optional[str] = None
     new_task_status: Optional[str] = None  # Optional status update for the task: IN_PROGRESS, BLOCKED, COMPLETED
+
+    _validate_evidence_link = field_validator("evidence_link")(_validate_safe_url)
 
 
 class DailyLogCreateRequest(BaseModel):

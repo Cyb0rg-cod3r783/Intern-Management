@@ -38,3 +38,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# ─── Startup safety checks ──────────────────────────────────────────────────────
+# Refuse to boot in production with a default/placeholder secret — a known SECRET_KEY
+# lets anyone forge valid JWTs (full account takeover for any user/role).
+_WEAK_SECRET_KEYS = {"change-me", "change-me-to-a-long-random-secret-key-at-least-64-chars", ""}
+if settings.ENVIRONMENT == "production":
+    if settings.SECRET_KEY in _WEAK_SECRET_KEYS or len(settings.SECRET_KEY) < 32:
+        raise RuntimeError(
+            "SECRET_KEY is missing or using a default/weak placeholder value. "
+            "Set a long, random SECRET_KEY (e.g. `openssl rand -hex 32`) before running in production."
+        )
+    if not settings.ENCRYPTION_KEY:
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not set. Required in production to store sensitive intern data (bank details) encrypted."
+        )

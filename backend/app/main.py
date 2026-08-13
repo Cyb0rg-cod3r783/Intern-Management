@@ -2,7 +2,7 @@
 Talakunchi Networks — Intern Management System Backend
 FastAPI application entry point.
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import auth, interns, tasks, handovers, departments, admin, audit, notifications, projects, approvals, daily_logs
@@ -23,6 +23,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Baseline hardening headers on every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    if settings.ENVIRONMENT == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
 
 # Register routers
 app.include_router(auth.router)

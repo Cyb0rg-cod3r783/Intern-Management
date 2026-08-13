@@ -2,6 +2,7 @@ import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 from datetime import date
 
 from app.database import get_db
@@ -14,6 +15,7 @@ from app.middleware.rbac import (
 )
 from app.services.audit_service import log_action
 from app.services.notification_service import notify, notify_admins
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -47,7 +49,7 @@ def _load_task(db: Session, task_id: str) -> Task:
             joinedload(Task.project),
             joinedload(Task.updates).joinedload(TaskUpdate.author),
         )
-        .filter(Task.id == uuid.UUID(task_id))
+        .filter(Task.id == parse_uuid(task_id, "task_id"))
         .first()
     )
     if not task:
@@ -57,7 +59,7 @@ def _load_task(db: Session, task_id: str) -> Task:
 
 def _get_intern_profile(db: Session, intern_id: str) -> InternProfile:
     profile = db.query(InternProfile).filter(
-        InternProfile.user_id == uuid.UUID(intern_id)
+        InternProfile.user_id == parse_uuid(intern_id, "intern_id")
     ).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Intern profile not found.")
@@ -86,8 +88,22 @@ def list_tasks(
     if current_user.role == UserRole.INTERN:
         # Intern: own tasks only
         query = query.filter(Task.intern_id == current_user.id)
+    elif current_user.role == UserRole.MANAGER:
+        # Manager: only tasks for interns in their department or directly reporting to them
+        query = query.join(InternProfile, Task.intern_id == InternProfile.user_id)
+        if current_user.department_id:
+            query = query.filter(
+                or_(
+                    InternProfile.department_id == current_user.department_id,
+                    InternProfile.reporting_manager_id == current_user.id,
+                )
+            )
+        else:
+            query = query.filter(InternProfile.reporting_manager_id == current_user.id)
+        if intern_id:
+            query = query.filter(Task.intern_id == parse_uuid(intern_id, "intern_id"))
     elif intern_id:
-        query = query.filter(Task.intern_id == uuid.UUID(intern_id))
+        query = query.filter(Task.intern_id == parse_uuid(intern_id, "intern_id"))
 
     if status_filter:
         query = query.filter(Task.status == status_filter)
@@ -114,6 +130,12 @@ def get_task(
     if current_user.role == UserRole.INTERN:
         if str(task.intern_id) != str(current_user.id):
             raise HTTPException(status_code=403, detail="You can only view your own tasks.")
+    elif current_user.role == UserRole.MANAGER:
+        intern_profile = _get_intern_profile(db, str(task.intern_id))
+        is_own_dept = bool(current_user.department_id) and intern_profile.department_id == current_user.department_id
+        is_own_intern = str(intern_profile.reporting_manager_id) == str(current_user.id)
+        if not (is_own_dept or is_own_intern):
+            raise HTTPException(status_code=403, detail="You can only view tasks for interns in your department or assigned to you.")
 
     return _build_task_out(task)
 

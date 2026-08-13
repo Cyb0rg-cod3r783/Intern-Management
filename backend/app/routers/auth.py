@@ -119,11 +119,13 @@ def get_me(current_user: User = Depends(get_current_user)):
 
 @router.put("/change-password")
 def change_password(
+    request: Request,
     body: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Change current user's password."""
+    check_rate_limit(request)
     try:
         change_user_password(db, current_user, body.old_password, body.new_password)
         return {"message": "Password updated successfully."}

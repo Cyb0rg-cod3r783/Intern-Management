@@ -2,8 +2,25 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from app.models.enums import TaskStatus, TaskPriority
+
+
+def _validate_safe_url(value: Optional[str]) -> Optional[str]:
+    """Reject dangerous URL schemes (javascript:, data:, vbscript:, etc.) to prevent
+    stored-XSS via link fields that are later rendered as clickable <a href> in the UI."""
+    if value is None:
+        return value
+    v = value.strip()
+    if not v:
+        return None
+    lowered = v.lower()
+    if lowered.startswith(("http://", "https://")):
+        return v
+    # Allow protocol-relative and bare-domain style links only if they don't smuggle a scheme
+    if ":" in lowered.split("/", 1)[0]:
+        raise ValueError("Link must start with http:// or https://")
+    return v
 
 
 class TaskUpdateOut(BaseModel):
@@ -51,6 +68,8 @@ class TaskCreateRequest(BaseModel):
     status: TaskStatus = TaskStatus.NOT_STARTED
     evidence_link: Optional[str] = None
 
+    _validate_evidence_link = field_validator("evidence_link")(_validate_safe_url)
+
 
 class TaskUpdateRequest(BaseModel):
     title: Optional[str] = None
@@ -61,6 +80,8 @@ class TaskUpdateRequest(BaseModel):
     priority: Optional[TaskPriority] = None
     evidence_link: Optional[str] = None
     completed_date: Optional[date] = None
+
+    _validate_evidence_link = field_validator("evidence_link")(_validate_safe_url)
 
 
 class TaskProgressUpdateRequest(BaseModel):

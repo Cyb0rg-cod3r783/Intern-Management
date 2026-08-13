@@ -37,8 +37,10 @@ def change_user_password(db: Session, user: User, old_password: str, new_passwor
         if not verify_password(old_password, user.password_hash):
             raise ValueError("Current password is incorrect.")
 
-    if not new_password or len(new_password) < 6:
-        raise ValueError("New password must be at least 6 characters long.")
+    if not new_password or len(new_password) < 8:
+        raise ValueError("New password must be at least 8 characters long.")
+    if not (any(c.isalpha() for c in new_password) and any(c.isdigit() for c in new_password)):
+        raise ValueError("New password must contain at least one letter and one number.")
 
     user.password_hash = hash_password(new_password)
     log_action(db, str(user.id), AuditAction.PASSWORD_CHANGED, metadata={"email": user.company_email})

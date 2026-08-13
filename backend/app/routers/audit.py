@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import User, UserRole, AuditLog, AuditAction
 from app.middleware.rbac import require_admin
 from app.schemas.misc import AuditLogOut
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/audit", tags=["Audit Logs"])
 
@@ -25,8 +26,7 @@ def get_audit_logs(
     if action:
         query = query.filter(AuditLog.action == action)
     if actor_id:
-        import uuid as _uuid
-        query = query.filter(AuditLog.actor_id == _uuid.UUID(actor_id))
+        query = query.filter(AuditLog.actor_id == parse_uuid(actor_id, "actor_id"))
 
     logs = query.offset(offset).limit(limit).all()
 

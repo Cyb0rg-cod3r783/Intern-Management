@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models import Department, User, UserRole
 from app.middleware.rbac import get_current_user, require_admin
 from app.schemas.misc import DepartmentCreateRequest, DepartmentUpdateRequest
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
@@ -57,7 +58,7 @@ def update_department(
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    dept = db.query(Department).filter(Department.id == uuid.UUID(dept_id)).first()
+    dept = db.query(Department).filter(Department.id == parse_uuid(dept_id, "dept_id")).first()
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found.")
 

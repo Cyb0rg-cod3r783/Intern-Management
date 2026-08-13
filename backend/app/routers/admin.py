@@ -21,6 +21,7 @@ from app.services.auth_service import hash_password, is_allowed_domain
 from app.services.audit_service import log_action
 from app.services.notification_service import notify_admins
 from app.schemas.misc import UserCreateRequest, UserUpdateRequest, UserOut
+from app.utils import parse_uuid
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -417,7 +418,7 @@ def get_executive_project_intelligence(
     from app.models import Project, Task, TaskUpdate, DailyWorkLog, DailyWorkLogEntry, InternProfile, User
     from app.models.enums import InternStatus, TaskStatus
 
-    p_uuid = uuid.UUID(project_id)
+    p_uuid = parse_uuid(project_id, "project_id")
     project = db.query(Project).filter(Project.id == p_uuid).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
@@ -828,8 +829,7 @@ def update_user(
     db: Session = Depends(get_db),
 ):
     """Admin only: edit a user account (Name, Email, Role, Department, Active status)."""
-    import uuid as _uuid
-    user = db.query(User).filter(User.id == _uuid.UUID(user_id)).first()
+    user = db.query(User).filter(User.id == parse_uuid(user_id, "user_id")).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
@@ -873,9 +873,8 @@ def delete_user(
     db: Session = Depends(get_db),
 ):
     """Admin only: delete a Manager or Admin user account permanently."""
-    import uuid as _uuid
     from app.models import InternApprovalRequest
-    user = db.query(User).filter(User.id == _uuid.UUID(user_id)).first()
+    user = db.query(User).filter(User.id == parse_uuid(user_id, "user_id")).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
