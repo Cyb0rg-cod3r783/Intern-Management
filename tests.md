@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-13
 **Scope:** Full-stack audit (FastAPI + PostgreSQL backend, Next.js frontend) ahead of go-live for ~100–150 users (Admin / Manager / Intern roles).
-**Method:** Static code review of every router/schema/service, live functional testing against a running instance (real login, real DB), and dependency review.
+**Method:** Static code review of every router/schema/service, live functional testing against a running instance (real login, real DB), a real-browser walkthrough of the login/CSRF/logout flow, and dependency review.
+
+> **Update (same day, round 2):** every item that was left open at the end of round 1 — including the two architectural ones originally flagged as "needs your sign-off" — was implemented and verified live at the user's request. See **§9** for the full round-2 changelog. The platform now has **zero known dependency CVEs** on both sides (confirmed via `pip-audit` / `npm audit`), httpOnly-cookie session auth with CSRF protection, and DB-backed (multi-worker-safe) rate limiting and token revocation.
 
 ---
 
@@ -184,3 +186,85 @@ These are lower urgency, higher blast-radius-to-change, or need a product decisi
 - `src/app/intern/tasks/[id]/page.tsx`, `src/app/admin/tasks/page.tsx`, `src/app/manager/dashboard/page.tsx`, `src/app/admin/handovers/page.tsx` — apply `safeHref()` at every user-supplied-link render site
 
 All changes were syntax-checked, the backend app was successfully imported and boot-tested against the live database, and the specific fixes (IDOR scoping, URL validation, UUID error handling, security headers, rate limiting) were verified with real HTTP requests as documented in §6.
+
+---
+
+## 9. Round 2 — everything else, fully implemented
+
+The user asked for every remaining item to be applied, including the two architectural ones (§7 items #4–#5) that round 1 flagged as needing explicit sign-off. All of the following were implemented and verified live.
+
+### 9.1 Session auth moved to httpOnly cookies + CSRF (closes §7 item #4)
+
+This was the biggest structural risk left after round 1: the JWT lived in `localStorage`, so any future XSS bug — anywhere in the app, forever — would be a full session-takeover vector, with no way to contain it.
+
+**What changed:**
+- **Backend** (`app/routers/auth.py`, `app/middleware/rbac.py`): login and the Google OAuth callback now set two cookies instead of returning the JWT in the response body:
+  - `tk_session` — the JWT itself, **httpOnly** (never readable by any JS, including a malicious injected script), `SameSite=Lax`, `Secure` in production.
+  - `tk_csrf` — a random per-session token, JS-readable, used for the CSRF defense below.
+  - `TokenResponse.access_token` is now `null` on every login response — the token is never present anywhere JS can read it.
+  - `get_current_user` (`app/middleware/rbac.py`) now accepts **either** an `Authorization: Bearer` header (unchanged path for any non-browser API client) **or** the `tk_session` cookie. `HTTPBearer` is now `auto_error=False` so a missing header falls through to the cookie check instead of hard-failing with a stale 403.
+  - **CSRF defense (double-submit cookie):** for any state-changing request (`POST`/`PUT`/`PATCH`/`DELETE`) authenticated via the cookie, `get_current_user` requires an `X-CSRF-Token` header that matches the `tk_csrf` cookie value, or it returns `403`. The Bearer-header path is exempt, since a third-party page cannot forge that header — cross-origin `fetch`/form-submits can't read or set custom headers on someone else's session, so CSRF only applies where cookies are the auth mechanism.
+  - Logout now clears both cookies (`response.delete_cookie(...)`) in addition to revoking the token.
+- **Frontend** (`lib/api.ts`, `lib/auth-context.tsx`, `components/NotificationBell.tsx`, `app/auth/callback/page.tsx`): all `localStorage.getItem/setItem/removeItem("tk_token")` calls are gone. Every `fetch` now sends `credentials: "include"` so the session cookie goes automatically, and a `getCsrfToken()` helper reads the JS-readable `tk_csrf` cookie and attaches it as `X-CSRF-Token` on every mutating request. `AuthProvider` now determines login state by calling `GET /auth/me` (which succeeds only if the browser has a valid session cookie) instead of checking `localStorage`. `loginWithToken(token, user)` was replaced with `completeLogin(user)` since there's no token for the frontend to hold anymore.
+
+**Verified live** (both via `curl` with a cookie jar and in a **real browser** through the actual login page):
+- Login sets both cookies; `document.cookie` in the browser console shows **only** `tk_csrf` — `tk_session` is completely invisible to JS, confirmed via `javascript_tool` (`document.cookie` → `"tk_csrf=..."` only) and `localStorage` confirmed empty (`localStorage.getItem('tk_token')` → `null`, `Object.keys(localStorage)` → `[]`).
+- `GET /auth/me` via cookie only → `200`.
+- `POST /departments/` via cookie **without** `X-CSRF-Token` → `403 "CSRF token missing or invalid."`
+- Same request **with** the correct `X-CSRF-Token` → `201` (created).
+- Same request with a **wrong** CSRF token → `403`.
+- Full real-browser round trip: typed real Admin credentials into the actual login form → landed on the dashboard → added a department through the real "+ Add Department" UI button (exercising the frontend's automatic CSRF-header injection end-to-end, no curl involved) → clicked "Sign out" → redirected to login, cookies cleared (`document.cookie` → `""`).
+- Bearer-header path re-confirmed unaffected for non-browser clients.
+
+*Note on trade-offs:* the login response no longer returns a usable token in the body for any client, browser or otherwise — this is intentional (a token that sits in a JSON response any page-level `fetch` interceptor could read defeats the purpose almost as much as `localStorage` would). If you ever need a non-browser integration (a script, a future mobile app) to authenticate, that now needs its own mechanism (e.g., a dedicated service-account/API-key flow) rather than reusing the browser login endpoint — flagging this as a product decision, not something I resolved unilaterally.
+
+### 9.2 Rate limiter and token blacklist moved to the database (closes §7 item #5)
+
+Both were in-process Python `dict`/`set`, meaning each uvicorn worker had independent state — the moment you run more than one worker (needed for 100–150 concurrent users), a revoked session could still work against a different worker, and the login rate limit could be bypassed by round-robining across workers.
+
+**What changed:**
+- New tables `blacklisted_tokens` (token **hash**, not the raw token — so a DB dump doesn't hand out live credentials — plus its natural expiry) and `login_attempts` (IP + timestamp), added via `app/models/security.py` and Alembic migration `011_add_security_tables` (applied to the live DB during this session — `alembic upgrade head` ran clean).
+- `app/services/token_blacklist.py` and `app/middleware/rate_limiter.py` were rewritten to query/write these tables instead of in-memory structures, with opportunistic cleanup of expired rows so the tables don't grow unbounded. No new infrastructure dependency (Redis, etc.) was introduced — this reuses the Postgres instance the app already needs.
+
+**Verified live:** logging out and reusing the same cookie → `401 "Session has been logged out or revoked."`; 5 rapid bad-password attempts succeed, the 6th → `429`, and this was re-confirmed to persist correctly through a full server restart during this session (proving it's no longer tied to process memory).
+
+### 9.3 Manager project-assignment scoping (closes §7 item #1)
+
+`POST /projects/{id}/assign-interns` now rejects (`403`) a Manager trying to assign a project outside their own department, or interns who are neither in their department nor directly reporting to them — mirroring the scoping pattern used everywhere else in the app (`app/routers/projects.py`).
+
+### 9.4 Structured validation errors on intern updates (closes §7 item #2)
+
+`PUT /interns/{intern_id}` still accepts a role-appropriate raw `dict` (unavoidable without a larger endpoint redesign, since Admin and Manager have different allowed fields), but constructing the typed Pydantic model from it is now wrapped in `try/except ValidationError`, returning a clean `422` with field-level errors instead of an unhandled exception (`app/routers/interns.py`).
+
+### 9.5 Bulk-import size/row caps (closes §7 item #3)
+
+`POST /admin/interns/bulk-import` now rejects files over 5 MB (`413`) and imports over 2,000 rows (`400`) before any parsing/DB work happens. Verified live with a 6 MB dummy file → `413 "File too large (5859 KB)..."`.
+
+### 9.6 `python-jose` → `PyJWT` migration (closes §7 item #3 from the dependency list)
+
+`app/services/auth_service.py` now uses `PyJWT` instead of `python-jose` for all JWT encode/decode — smaller, more actively maintained, and this session's dependency audit (next section) found active CVEs against the old `python-jose` install path via its transitive `starlette`/`fastapi` chain that this migration also helps clear.
+
+### 9.7 Full dependency vulnerability sweep (closes §7 item #7, and finds real issues §5 didn't have visibility into)
+
+Round 1's dependency section was version-comparison against training knowledge. This round, `pip-audit` and `npm audit` were actually **run** against the live environment:
+
+- **Frontend:** `npm audit` → **0 vulnerabilities** (335 prod + 292 dev dependencies scanned).
+- **Backend, before fixes:** `pip-audit` found **46 known vulnerabilities across 6 packages** — `pyjwt`, `python-multipart`, `cryptography`, `python-dotenv`, `authlib`, and a transitive `starlette` (pulled in by `fastapi==0.115.5`) with CVEs disclosed after this assistant's knowledge cutoff, which is exactly the scenario a live scanner catches and a memory-based review can't.
+- **Fixes applied:**
+  - `authlib` — confirmed **completely unused** (`grep` across the whole backend found zero imports; Google OAuth is hand-rolled with `httpx`) — **removed entirely** rather than patched, shrinking the attack surface instead of just patching it.
+  - `PyJWT` → `2.13.0`, `python-multipart` → `0.0.32`, `python-dotenv` → `1.2.2`, `cryptography` → `50.0.0` (the one remaining finding after the first pass, `PYSEC-2026-3552`, was a PKCS7/SMIME timing side-channel — not reachable in this codebase since it only uses `Fernet` symmetric encryption, but fixed anyway since a clean upgrade was available).
+  - `fastapi` → `0.141.1` (pulls in a patched `starlette==1.6.0`) — this was the largest version jump in the whole audit (26 minor versions), so it got the most scrutiny: full re-run of the entire round-1 + round-2 live test battery (login, cookie/CSRF flow, RBAC scoping, malformed-UUID handling, XSS-link validation, rate limiting, security headers) against the upgraded stack, plus a full real-browser login → dashboard → logout pass. Everything behaved identically. Two `Query(..., regex=...)` call sites in `admin.py` were updated to the new `pattern=` parameter name (the old one still worked, just emitted a deprecation warning — fixed for future-proofing, not because it was broken).
+- **Result:** `pip-audit -r requirements.txt` now reports **zero known vulnerabilities**, matching the frontend.
+- **New:** `.github/workflows/dependency-audit.yml` — runs `pip-audit` and `npm audit` on every push/PR that touches a dependency manifest, plus a weekly Monday scan, so newly-disclosed CVEs against already-installed versions get caught automatically going forward (closes the CI recommendation from round 1 §7 item #7).
+
+### 9.8 What's left
+
+Nothing from the original findings list remains open. The only manual, non-code action is still **rotating the seeded demo credentials** (`Admin_credentials.txt`) before real users are onboarded — that's a credentials-management action for you to take, not something safe for an assistant to do unattended against a live account (risk of locking you out).
+
+### 9.9 Files changed in round 2
+
+**Backend:** `app/routers/auth.py` (rewritten — cookie auth), `app/middleware/rbac.py` (cookie + CSRF support), `app/middleware/rate_limiter.py` (rewritten — DB-backed), `app/services/token_blacklist.py` (rewritten — DB-backed), `app/services/auth_service.py` (PyJWT migration, CSRF token helper), `app/models/security.py` (new), `app/models/__init__.py`, `alembic/versions/011_add_security_tables.py` (new, applied), `app/routers/projects.py` (assign-interns scoping), `app/routers/interns.py` (validation error handling), `app/routers/admin.py` (bulk-import caps, `regex`→`pattern`), `requirements.txt` (all vulnerable packages upgraded, `authlib` removed).
+
+**Frontend:** `lib/api.ts` (cookie-based requests, CSRF header injection), `lib/auth-context.tsx` (rewritten — cookie-based session state), `components/NotificationBell.tsx`, `app/auth/callback/page.tsx`.
+
+**Infra:** `.github/workflows/dependency-audit.yml` (new), `.claude/launch.json` (new, for this session's browser testing).

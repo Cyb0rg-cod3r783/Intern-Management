@@ -109,7 +109,7 @@ def get_analytics(
 
 @router.get("/analytics/financial-overview")
 def get_financial_overview(
-    timeframe: str = Query("monthly", regex="^(monthly|quarterly|half_yearly|annually|custom)$"),
+    timeframe: str = Query("monthly", pattern="^(monthly|quarterly|half_yearly|annually|custom)$"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     current_user: User = Depends(require_admin),
@@ -640,7 +640,7 @@ def get_project_costs(
 
 @router.get("/analytics/department-costs")
 def get_department_costs(
-    timeframe: str = Query("monthly", regex="^(monthly|quarterly|half_yearly|annually|custom)$"),
+    timeframe: str = Query("monthly", pattern="^(monthly|quarterly|half_yearly|annually|custom)$"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     current_user: User = Depends(require_admin),

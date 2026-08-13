@@ -4,8 +4,10 @@ import AppShell from "@/components/AppShell";
 import { adminApi, departmentsApi, UserInfo, Department } from "@/lib/api";
 import { StatusBadge } from "@/components/ui-utils";
 import PasswordInput from "@/components/PasswordInput";
+import { useAuth } from "@/lib/auth-context";
 
 export default function ManagersPage() {
+  const { user } = useAuth();
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,16 +35,21 @@ export default function ManagersPage() {
   const [editError, setEditError] = useState("");
 
   const load = () => {
+    if (!user) return;
     Promise.all([
       adminApi.users(),
       departmentsApi.list(),
     ]).then(([u, d]) => {
       setUsers(u.filter((x) => x.role !== "INTERN"));
       setDepartments(d);
+    }).catch((e: any) => {
+      if (e?.status !== 401) console.error(e);
     }).finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    if (user) load();
+  }, [user]);
 
   const handleCreate = async () => {
     setError("");

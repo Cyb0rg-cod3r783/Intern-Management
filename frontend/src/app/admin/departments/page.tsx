@@ -2,10 +2,12 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { departmentsApi, Department } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 import ConfirmModal from "@/components/ConfirmModal";
 
 export default function DepartmentsPage() {
+  const { user } = useAuth();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -18,13 +20,16 @@ export default function DepartmentsPage() {
   const [toggling, setToggling] = useState(false);
 
   const load = () => {
+    if (!user) return;
     departmentsApi.listAll()
       .then(setDepartments)
-      .catch((err) => setError(err.message || "Failed to load departments"))
+      .catch((err: any) => { if (err?.status !== 401) setError(err.message || "Failed to load departments"); })
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    if (user) load();
+  }, [user]);
 
   const handleAdd = async () => {
     if (!newName.trim()) return;

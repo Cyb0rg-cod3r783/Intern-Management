@@ -30,6 +30,7 @@ export default function TasksPage() {
   const [error, setError] = useState("");
 
   const loadTasks = () => {
+    if (!user) return;
     setLoading(true);
     Promise.all([
       tasksApi.list({ status: statusFilter || undefined, priority: priorityFilter || undefined, overdue_only: overdueOnly || undefined }),
@@ -41,10 +42,14 @@ export default function TasksPage() {
         const updated = tList.find((t) => t.id === selectedTaskForUpdates.id);
         if (updated) setSelectedTaskForUpdates(updated);
       }
+    }).catch((e: any) => {
+      if (e?.status !== 401) console.error(e);
     }).finally(() => setLoading(false));
   };
 
-  useEffect(loadTasks, [statusFilter, priorityFilter, overdueOnly]);
+  useEffect(() => {
+    if (user) loadTasks();
+  }, [user, statusFilter, priorityFilter, overdueOnly]);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();

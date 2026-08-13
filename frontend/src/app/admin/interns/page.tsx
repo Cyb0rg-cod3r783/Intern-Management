@@ -4,11 +4,13 @@ import AppShell from "@/components/AppShell";
 import { internsApi, departmentsApi, adminApi, InternProfile, Department, ManagerRef, ApiError } from "@/lib/api";
 import { StatusBadge, formatDate } from "@/components/ui-utils";
 import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 
 import ConfirmModal from "@/components/ConfirmModal";
 import BulkUploadModal from "@/components/BulkUploadModal";
 
 export default function AdminInternsPage() {
+  const { user } = useAuth();
   const [interns, setInterns] = useState<InternProfile[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [managers, setManagers] = useState<ManagerRef[]>([]);
@@ -31,6 +33,7 @@ export default function AdminInternsPage() {
   const [isSubmittingDelete, setIsSubmittingDelete] = useState(false);
 
   const fetchInterns = useCallback(async () => {
+    if (!user) return;
     setLoading(true);
     try {
       const data = await internsApi.list({
@@ -40,19 +43,20 @@ export default function AdminInternsPage() {
         manager_id: managerFilter || undefined,
       });
       setInterns(data);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      if (e?.status !== 401) console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [search, deptFilter, statusFilter, managerFilter]);
+  }, [user, search, deptFilter, statusFilter, managerFilter]);
 
   useEffect(() => {
+    if (!user) return;
     Promise.all([departmentsApi.list(), adminApi.managers()])
       .then(([d, m]) => { setDepartments(d); setManagers(m); })
-      .catch((e) => console.error(e));
+      .catch((e: any) => { if (e?.status !== 401) console.error(e); });
     fetchInterns();
-  }, [fetchInterns]);
+  }, [user, fetchInterns]);
 
   const toggleSelectAll = () => {
     if (selectedUserIds.size === interns.length && interns.length > 0) {
