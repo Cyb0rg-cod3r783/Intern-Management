@@ -262,11 +262,31 @@ def assign_interns_to_project(
     """Assign or update interns for a project."""
     p = _load_project(db, project_id)
 
+    if current_user.role == UserRole.MANAGER and current_user.department_id:
+        # Manager scoping: only their own department's project, only their own interns.
+        if p.department_id and p.department_id != current_user.department_id:
+            raise HTTPException(status_code=403, detail="You can only assign interns to projects in your own department.")
+
     target_users = (
         db.query(User)
         .filter(User.id.in_([parse_uuid(uid, "user_id") for uid in body.user_ids]))
         .all()
     ) if body.user_ids else []
+
+    if current_user.role == UserRole.MANAGER and current_user.department_id:
+        out_of_scope = [
+            u.full_name for u in target_users
+            if u.department_id != current_user.department_id
+            and not db.query(InternProfile).filter(
+                InternProfile.user_id == u.id,
+                InternProfile.reporting_manager_id == current_user.id,
+            ).first()
+        ]
+        if out_of_scope:
+            raise HTTPException(
+                status_code=403,
+                detail=f"You can only assign interns from your own department or directly reporting to you. Out of scope: {', '.join(out_of_scope)}",
+            )
 
     p.interns = target_users
     db.commit()

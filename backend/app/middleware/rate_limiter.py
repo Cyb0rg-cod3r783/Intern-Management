@@ -1,35 +1,43 @@
 """
-In-memory IP rate limiter for authentication endpoints.
+DB-backed IP rate limiter for authentication endpoints.
 Limits attempts per IP address per time window.
+
+DB-backed (see app/models/security.py::LoginAttempt) so the limit holds
+across multiple worker processes and app restarts — an in-memory dict only
+protects a single process, meaning an attacker could round-robin across
+workers to bypass it entirely.
 """
 from datetime import datetime, timedelta
-import threading
 from fastapi import HTTPException, status, Request
-
-_ip_attempts: dict[str, list[datetime]] = {}
-_lock = threading.Lock()
+from sqlalchemy.orm import Session
 
 MAX_ATTEMPTS = 5
 WINDOW_SECONDS = 60
+_CLEANUP_AGE = timedelta(hours=1)
 
 
-def check_rate_limit(request: Request) -> None:
+def check_rate_limit(db: Session, request: Request) -> None:
     """Enforce rate limit of MAX_ATTEMPTS per WINDOW_SECONDS per IP."""
+    from app.models.security import LoginAttempt
+
     client_ip = request.client.host if request.client else "unknown"
     now = datetime.utcnow()
     cutoff = now - timedelta(seconds=WINDOW_SECONDS)
 
-    with _lock:
-        timestamps = _ip_attempts.get(client_ip, [])
-        # Filter out expired attempts
-        timestamps = [t for t in timestamps if t > cutoff]
+    # Opportunistic cleanup so the table doesn't grow unbounded.
+    db.query(LoginAttempt).filter(LoginAttempt.attempted_at < now - _CLEANUP_AGE).delete(synchronize_session=False)
 
-        if len(timestamps) >= MAX_ATTEMPTS:
-            _ip_attempts[client_ip] = timestamps
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many login attempts. Please wait 1 minute before trying again.",
-            )
+    recent_count = db.query(LoginAttempt).filter(
+        LoginAttempt.ip_address == client_ip,
+        LoginAttempt.attempted_at > cutoff,
+    ).count()
 
-        timestamps.append(now)
-        _ip_attempts[client_ip] = timestamps
+    if recent_count >= MAX_ATTEMPTS:
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please wait 1 minute before trying again.",
+        )
+
+    db.add(LoginAttempt(ip_address=client_ip, attempted_at=now))
+    db.commit()

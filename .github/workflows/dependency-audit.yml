@@ -1,0 +1,46 @@
+name: Dependency Audit
+
+# Scans backend (pip-audit) and frontend (npm audit) dependencies for known
+# CVEs on every push/PR that touches dependency manifests, plus a weekly
+# scheduled run so newly-disclosed CVEs against already-installed versions
+# are caught even without a code change.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/requirements.txt"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - ".github/workflows/dependency-audit.yml"
+  pull_request:
+    paths:
+      - "backend/requirements.txt"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+  schedule:
+    - cron: "0 6 * * 1" # every Monday 06:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  backend-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit backend/requirements.txt
+        run: pip-audit -r backend/requirements.txt --desc
+
+  frontend-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high

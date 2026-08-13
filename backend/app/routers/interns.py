@@ -338,8 +338,13 @@ def update_intern(
         "status": profile.status,
     }
 
+    from pydantic import ValidationError
+
     if current_user.role == UserRole.ADMIN:
-        parsed = InternUpdateAdminRequest(**body)
+        try:
+            parsed = InternUpdateAdminRequest(**body)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
         old_dept_id = profile.department_id
         old_cat = (profile.category or "intern").lower()
         old_is_paid = bool(profile.is_paid) and (profile.internship_type or "").lower() != "unpaid"
@@ -458,7 +463,10 @@ def update_intern(
                    target_type="intern", target_id=intern_id)
 
     else:  # MANAGER
-        parsed = InternUpdateManagerRequest(**body)
+        try:
+            parsed = InternUpdateManagerRequest(**body)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
         for field in ["title", "location", "remarks", "end_date", "duration"]:
             val = getattr(parsed, field, None)
             if val is not None:

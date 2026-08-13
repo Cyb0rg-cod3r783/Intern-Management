@@ -15,7 +15,8 @@ Usage in routers:
         # Further check ownership in handler for managers
         ...
 """
-from fastapi import Depends, HTTPException, status
+from typing import Optional
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -25,16 +26,48 @@ from app.services.auth_service import decode_access_token
 from app.services.token_blacklist import is_token_blacklisted
 import uuid
 
-bearer_scheme = HTTPBearer()
+# auto_error=False: a request may instead be authenticated via the httpOnly
+# session cookie (browser flow) rather than an Authorization header.
+bearer_scheme = HTTPBearer(auto_error=False)
+
+SESSION_COOKIE = "tk_session"
+CSRF_COOKIE = "tk_csrf"
+CSRF_HEADER = "X-CSRF-Token"
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """Extract and validate the JWT bearer token → return the authenticated User."""
-    token = credentials.credentials
-    if is_token_blacklisted(token):
+    """
+    Extract and validate the session → return the authenticated User.
+
+    Accepts either an `Authorization: Bearer <jwt>` header (API/non-browser
+    clients) or the `tk_session` httpOnly cookie (the web frontend). Cookie-
+    authenticated requests must also carry a matching `X-CSRF-Token` header
+    on state-changing methods (double-submit-cookie CSRF defense) — the
+    Bearer-header path is not vulnerable to CSRF, since a third-party page
+    cannot read or set that header on a forged cross-site request.
+    """
+    via_cookie = False
+    if credentials:
+        token = credentials.credentials
+    else:
+        token = request.cookies.get(SESSION_COOKIE)
+        via_cookie = bool(token)
+
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated.")
+
+    if via_cookie and request.method in _UNSAFE_METHODS:
+        csrf_cookie = request.cookies.get(CSRF_COOKIE)
+        csrf_header = request.headers.get(CSRF_HEADER)
+        if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token missing or invalid.")
+
+    if is_token_blacklisted(db, token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session has been logged out or revoked.",

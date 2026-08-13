@@ -8,8 +8,9 @@ JWT tokens carry: sub (user_id), email, role.
 """
 from datetime import datetime, timedelta
 from typing import Optional
+import secrets
 import httpx
-from jose import JWTError, jwt
+import jwt
 import bcrypt
 from sqlalchemy.orm import Session
 from app.config import settings
@@ -61,11 +62,18 @@ def create_access_token(user: User) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_access_token(token: str) -> dict:
+def decode_access_token(token: str, verify_exp: bool = True) -> dict:
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-    except JWTError:
+        options = {} if verify_exp else {"verify_exp": False}
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM], options=options)
+    except jwt.PyJWTError:
         return None
+
+
+def create_csrf_token() -> str:
+    """Random token for the double-submit-cookie CSRF defense used by the
+    cookie-based browser session (see app/routers/auth.py)."""
+    return secrets.token_urlsafe(32)
 
 
 # ─── Domain validation ─────────────────────────────────────────────────────────

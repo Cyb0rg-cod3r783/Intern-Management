@@ -982,6 +982,9 @@ REQUIRED_BULK_COLUMNS = [
     "initial_password"
 ]
 
+MAX_BULK_FILE_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_BULK_ROWS = 2000
+
 
 @router.get("/export/bulk-template")
 def download_bulk_template(current_user: User = Depends(require_admin)):
@@ -1016,6 +1019,12 @@ async def bulk_import_interns(
     filename = file.filename.lower()
     contents = await file.read()
 
+    if len(contents) > MAX_BULK_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(contents) // 1024} KB). Maximum allowed size is {MAX_BULK_FILE_BYTES // (1024 * 1024)} MB.",
+        )
+
     rows = []
     if filename.endswith(".csv"):
         text = contents.decode("utf-8-sig")
@@ -1042,6 +1051,12 @@ async def bulk_import_interns(
 
     if not rows:
         raise HTTPException(status_code=400, detail="File contains no data rows.")
+
+    if len(rows) > MAX_BULK_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File contains {len(rows)} rows, exceeding the maximum of {MAX_BULK_ROWS} per import. Split into smaller batches.",
+        )
 
     # 1. Validate all 16 column headers are present
     first_row_headers = [k.strip().lower() for k in rows[0].keys()]
