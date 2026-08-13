@@ -5,7 +5,7 @@ FastAPI application entry point.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import auth, interns, tasks, handovers, departments, admin, audit, notifications, projects, approvals
+from app.routers import auth, interns, tasks, handovers, departments, admin, audit, notifications, projects, approvals, daily_logs
 
 app = FastAPI(
     title="Talakunchi Intern Management System",
@@ -32,6 +32,7 @@ app.include_router(handovers.router)
 app.include_router(departments.router)
 app.include_router(projects.router)
 app.include_router(approvals.router)
+app.include_router(daily_logs.router)
 app.include_router(admin.router)
 app.include_router(audit.router)
 app.include_router(notifications.router)

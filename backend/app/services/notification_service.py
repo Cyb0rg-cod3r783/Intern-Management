@@ -57,13 +57,13 @@ def check_and_notify_due_tasks(db: Session, user: User) -> None:
             if t.due_date:
                 if t.due_date < now:
                     _ensure_single_notification(
-                        db, user.id, f"🔴 Task Overdue: {t.title}",
+                        db, user.id, f"Task Overdue: {t.title}",
                         f"Task '{t.title}' passed its due date ({t.due_date}).",
                         "OVERDUE", f"/intern/tasks/{t.id}"
                     )
                 elif t.due_date == tomorrow or t.due_date == now:
                     _ensure_single_notification(
-                        db, user.id, f"⏳ Task Due Soon: {t.title}",
+                        db, user.id, f"Task Due Soon: {t.title}",
                         f"Task '{t.title}' is due on {t.due_date}.",
                         "DUE_SOON", f"/intern/tasks/{t.id}"
                     )

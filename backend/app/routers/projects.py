@@ -7,7 +7,7 @@ from sqlalchemy import func
 from app.database import get_db
 from app.models import User, UserRole, Project, project_interns, Task, TaskUpdate, AuditAction, InternProfile
 from app.models.enums import TaskStatus
-from app.schemas.project import ProjectOut, ProjectCreateRequest, ProjectUpdateRequest, ProjectAssignInternsRequest
+from app.schemas.project import ProjectOut, ProjectCreateRequest, ProjectUpdateRequest, ProjectAssignInternsRequest, ProjectPhaseUpdate
 from app.schemas.intern import DepartmentOut, UserRef
 from app.schemas.task import TaskOut, TaskUpdateOut
 from app.middleware.rbac import get_current_user, require_admin_or_manager
@@ -51,6 +51,7 @@ def _build_project_out(db: Session, project: Project) -> ProjectOut:
         name=project.name,
         description=project.description,
         status=project.status,
+        phase=project.phase or "DEVELOPMENT",
         start_date=project.start_date,
         target_end_date=project.target_end_date,
         department_id=project.department_id,
@@ -203,6 +204,22 @@ def get_project_tasks(
         .all()
     )
     return [_build_task_out(t) for t in tasks]
+
+
+# ─── PATCH /projects/{project_id}/phase ────────────────────────────────────────
+@router.patch("/{project_id}/phase", response_model=ProjectOut)
+def update_project_phase(
+    project_id: str,
+    body: ProjectPhaseUpdate,
+    current_user: User = Depends(require_admin_or_manager),
+    db: Session = Depends(get_db),
+):
+    """Update project lifecycle phase (PLANNING, DEVELOPMENT, TESTING, COMPLETED)."""
+    p = _load_project(db, project_id)
+    p.phase = body.phase.upper()
+    db.commit()
+    db.refresh(p)
+    return _build_project_out(db, p)
 
 
 # ─── PUT /projects/{project_id} ────────────────────────────────────────────────

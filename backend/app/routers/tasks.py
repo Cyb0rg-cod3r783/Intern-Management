@@ -161,7 +161,7 @@ def create_task(
     # Trigger: Notify Intern about new task assigned by Manager/Admin
     if current_user.role in (UserRole.ADMIN, UserRole.MANAGER):
         notify(
-            db, body.intern_id, "📋 New Task Assigned",
+            db, body.intern_id, "New Task Assigned",
             f"Assigned task: '{task.title}' by {current_user.full_name}",
             "NEW_TASK", f"/intern/tasks/{task.id}"
         )
@@ -205,14 +205,14 @@ def update_task(
             # Trigger: Task completed -> notify Manager
             if intern_profile.reporting_manager_id:
                 notify(
-                    db, intern_profile.reporting_manager_id, "✅ Task Completed",
+                    db, intern_profile.reporting_manager_id, "Task Completed",
                     f"{intern_name} completed task: '{task.title}'",
                     "TASK_COMPLETED", "/manager/tasks"
                 )
         elif task.status == TaskStatus.BLOCKED:
             # Trigger: Task blocked -> notify Admins
             notify_admins(
-                db, "🚫 Task Blocked Alert",
+                db, "Task Blocked Alert",
                 f"{intern_name}'s task '{task.title}' was marked as BLOCKED.",
                 "BLOCKED_TASK", "/admin/tasks"
             )
@@ -254,14 +254,14 @@ def add_progress_update(
         # Trigger: Intern update -> notify Manager
         if intern_profile.reporting_manager_id:
             notify(
-                db, intern_profile.reporting_manager_id, "📝 Intern Posted Update",
+                db, intern_profile.reporting_manager_id, "Intern Posted Update",
                 f"{current_user.full_name} posted a note on '{task.title}'",
                 "INTERN_UPDATE", "/manager/tasks"
             )
     else:
         # Trigger: Manager feedback -> notify Intern
         notify(
-            db, task.intern_id, "💬 New Manager Feedback",
+            db, task.intern_id, "New Manager Feedback",
             f"{current_user.full_name} commented on '{task.title}'",
             "MANAGER_FEEDBACK", f"/intern/tasks/{task.id}"
         )

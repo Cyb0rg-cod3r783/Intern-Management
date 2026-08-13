@@ -8,6 +8,7 @@ from app.models.notification import Notification
 from app.models.project import Project, project_interns
 from app.models.intern_approval_request import InternApprovalRequest
 from app.models.intern_history_log import InternHistoryLog
+from app.models.daily_work_log import DailyWorkLog, DailyWorkLogEntry
 from app.models.enums import (
     UserRole, InternStatus, TaskStatus, TaskPriority,
     HandoverStatus, AuditAction
@@ -26,6 +27,8 @@ __all__ = [
     "project_interns",
     "InternApprovalRequest",
     "InternHistoryLog",
+    "DailyWorkLog",
+    "DailyWorkLogEntry",
     "UserRole",
     "InternStatus",
     "TaskStatus",

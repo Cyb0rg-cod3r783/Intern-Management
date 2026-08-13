@@ -21,7 +21,8 @@ class Project(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     status = Column(String, default="ACTIVE", nullable=False)  # PLANNING, ACTIVE, COMPLETED, ON_HOLD
-    
+    phase = Column(String, default="DEVELOPMENT", nullable=False)  # PLANNING, DEVELOPMENT, TESTING, COMPLETED
+
     start_date = Column(Date, nullable=True)
     target_end_date = Column(Date, nullable=True)
     

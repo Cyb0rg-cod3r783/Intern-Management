@@ -106,7 +106,12 @@ def list_interns(
     - Intern: 403
     """
     if current_user.role == UserRole.INTERN:
-        raise HTTPException(status_code=403, detail="Interns cannot list other interns.")
+        prof = db.query(InternProfile).options(
+            joinedload(InternProfile.user),
+            joinedload(InternProfile.department),
+            joinedload(InternProfile.reporting_manager),
+        ).filter(InternProfile.user_id == current_user.id).first()
+        return [_build_intern_response(prof)] if prof else []
 
     query = (
         db.query(InternProfile)
@@ -121,11 +126,24 @@ def list_interns(
 
     if department_id:
         query = query.filter(InternProfile.department_id == uuid.UUID(department_id))
+    elif current_user.role == UserRole.MANAGER:
+        # Enforce department isolation: Manager can strictly only view interns in their department or assigned to them
+        if current_user.department_id:
+            query = query.filter(
+                or_(
+                    InternProfile.department_id == current_user.department_id,
+                    InternProfile.reporting_manager_id == current_user.id
+                )
+            )
+        else:
+            query = query.filter(InternProfile.reporting_manager_id == current_user.id)
+
     if status_filter:
         query = query.filter(InternProfile.status == status_filter)
     elif current_user.role == UserRole.MANAGER:
         # Exclude candidates pending onboarding approval or rejected from Manager's active lists
         query = query.filter(InternProfile.status.notin_([InternStatus.PENDING_APPROVAL, InternStatus.REJECTED_BY_MANAGER]))
+
     if manager_id:
         query = query.filter(InternProfile.reporting_manager_id == uuid.UUID(manager_id))
     if search:
@@ -267,7 +285,7 @@ def create_intern(
 
         for mgr in managers_to_notify:
             notify(
-                db, mgr.id, "⏳ New Intern Onboarding Request",
+                db, mgr.id, "New Intern Onboarding Request",
                 f"New intern '{new_user.full_name}' was onboarded. Please review and accept/decline department placement.",
                 "APPROVAL_REQUEST", "/manager/dashboard"
             )
@@ -322,32 +340,60 @@ def update_intern(
     if current_user.role == UserRole.ADMIN:
         parsed = InternUpdateAdminRequest(**body)
         old_dept_id = profile.department_id
+        old_cat = (profile.category or "intern").lower()
+        old_is_paid = bool(profile.is_paid) and (profile.internship_type or "").lower() != "unpaid"
 
-        # Validate Promotion Category Matrix
-        if parsed.category is not None and parsed.category.lower() != (profile.category or "intern").lower():
-            old_cat = (profile.category or "intern").lower()
-            new_cat = parsed.category.lower()
-            valid_targets = {
-                "intern": ["trainee", "contract", "full_time"],
-                "trainee": ["contract", "full_time"],
-                "contract": ["full_time"],
-                "full_time": [],
-            }
-            if new_cat not in valid_targets.get(old_cat, []):
+        # Handle "intern_paid" promotion target alias from frontend dropdown
+        if parsed.category == "intern_paid":
+            parsed.category = "intern"
+            parsed.internship_type = "paid"
+            parsed.is_paid = True
+
+        # Restrict revising stipend for Unpaid interns unless promoting to Paid status
+        if parsed.stipend_amount is not None and parsed.stipend_amount > 0:
+            becoming_paid = (parsed.is_paid is True) or (parsed.internship_type and parsed.internship_type.lower() == "paid")
+            if not old_is_paid and not becoming_paid:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid promotion transition from '{old_cat.upper()}' to '{new_cat.upper()}'. Allowed targets: {[t.upper() for t in valid_targets.get(old_cat, [])]}"
+                    detail="Cannot revise stipend for an Unpaid intern. Please promote the intern to 'Paid' status (e.g. Intern (Paid) or Trainee) before revising stipend."
                 )
+
+        # Validate Promotion Category Matrix
+        if (parsed.category is not None and parsed.category.lower() != old_cat) or (parsed.is_paid and not old_is_paid):
+            new_cat = (parsed.category or old_cat).lower()
             
-            # Enforce Paid requirement for trainee, contract, full_time
-            if new_cat in ["trainee", "contract", "full_time"]:
+            # Case A: Unpaid Intern -> Paid Intern promotion
+            if old_cat == "intern" and new_cat == "intern" and parsed.is_paid and not old_is_paid:
                 parsed.internship_type = "paid"
                 parsed.is_paid = True
-                if parsed.stipend_amount is None and (profile.stipend_amount is None or profile.stipend_amount <= 0):
+                if parsed.stipend_amount is None or parsed.stipend_amount <= 0:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Promotion to {new_cat.upper()} requires a valid paid stipend amount (> 0)."
+                        detail="Promotion to Intern (Paid) requires a valid paid stipend amount (> 0)."
                     )
+            # Case B: Cross-Category Promotion
+            elif new_cat != old_cat:
+                valid_targets = {
+                    "intern": ["trainee", "contract", "full_time"],
+                    "trainee": ["contract", "full_time"],
+                    "contract": ["full_time"],
+                    "full_time": [],
+                }
+                if new_cat not in valid_targets.get(old_cat, []):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid promotion transition from '{old_cat.upper()}' to '{new_cat.upper()}'. Allowed targets: {[t.upper() for t in valid_targets.get(old_cat, [])]}"
+                    )
+                
+                # Enforce Paid requirement for trainee, contract, full_time
+                if new_cat in ["trainee", "contract", "full_time"]:
+                    parsed.internship_type = "paid"
+                    parsed.is_paid = True
+                    if parsed.stipend_amount is None and (profile.stipend_amount is None or profile.stipend_amount <= 0):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Promotion to {new_cat.upper()} requires a valid paid stipend amount (> 0)."
+                        )
 
         if parsed.full_name is not None:
             profile.user.full_name = parsed.full_name
@@ -388,7 +434,7 @@ def update_intern(
             ).all()
             for mgr in target_managers:
                 notify(
-                    db, mgr.id, "🔄 Department Transfer Request",
+                    db, mgr.id, "Department Transfer Request",
                     f"Intern '{profile.user.full_name}' has been requested for transfer into your department. Please review and accept/decline in Pending Approvals.",
                     "APPROVAL_REQUEST", "/manager/dashboard"
                 )
@@ -402,7 +448,7 @@ def update_intern(
         if parsed.bank_account_number is not None or parsed.stipend_amount is not None or parsed.personal_email is not None:
             intern_name = profile.user.full_name if profile.user else "Intern"
             notify_admins(
-                db, "🔒 Sensitive Data Alert",
+                db, "Sensitive Data Alert",
                 f"{current_user.full_name} updated sensitive records for {intern_name}.",
                 "SENSITIVE_DATA", f"/admin/interns/{intern_id}"
             )

@@ -216,20 +216,27 @@ def detect_and_record_profile_changes(
             is_sensitive=False,
         )
 
-    # 6. Check Promotion (category change e.g. intern -> trainee -> contract -> full_time)
+    # 6. Check Promotion (category change e.g. intern -> trainee OR unpaid -> paid intern)
     old_cat = old_data.get("category")
     new_cat = new_data.get("category")
+    old_type = (old_data.get("internship_type") or "paid").lower()
+    new_type = (new_data.get("internship_type") or "paid").lower()
+    old_is_paid = bool(old_data.get("is_paid")) and old_type != "unpaid"
+    new_is_paid = bool(new_data.get("is_paid")) and new_type != "unpaid"
 
-    if new_cat and old_cat and old_cat.lower() != new_cat.lower():
-        old_type = old_data.get("internship_type", "paid")
-        new_type = new_data.get("internship_type", "paid")
+    cat_changed = new_cat and old_cat and old_cat.lower() != new_cat.lower()
+    unpaid_to_paid_intern = (not old_is_paid and new_is_paid)
+
+    if cat_changed or unpaid_to_paid_intern:
         old_stipend = old_data.get("stipend_amount")
         new_stipend = new_data.get("stipend_amount")
 
-        old_desc = f"{old_cat.upper()} ({old_type.upper()})"
-        new_desc = f"{new_cat.upper()} ({new_type.upper()}"
+        old_desc = f"INTERN (UNPAID)" if not old_is_paid else f"{(old_cat or 'intern').upper()} ({old_type.upper()})"
+        
+        target_title = f"Intern (Paid)" if unpaid_to_paid_intern and not cat_changed else (new_cat or 'intern').replace('_', ' ').title()
+        new_desc = f"INTERN (PAID" if unpaid_to_paid_intern and not cat_changed else f"{(new_cat or 'intern').upper()} ({new_type.upper()}"
         if new_stipend and float(new_stipend) > 0:
-            new_desc += f" ₹{float(new_stipend):,.2f}"
+            new_desc += f" ₹{float(new_stipend):,.2f}/mo"
         new_desc += ")"
 
         record_history_log(
@@ -237,7 +244,7 @@ def detect_and_record_profile_changes(
             intern_profile_id=p_id,
             user_id=u_id,
             event_type="PROMOTION",
-            title=f"Promoted to {new_cat.replace('_', ' ').title()}",
+            title=f"Promoted to {target_title}",
             description=f"Candidate promoted from {old_desc} to {new_desc} by {performer_name}.",
             old_value=old_desc,
             new_value=new_desc,

@@ -9,6 +9,7 @@ class ProjectBase(BaseModel):
     name: str
     description: Optional[str] = None
     status: Optional[str] = "ACTIVE"
+    phase: Optional[str] = "DEVELOPMENT"
     start_date: Optional[date] = None
     target_end_date: Optional[date] = None
     department_id: Optional[str] = None
@@ -22,9 +23,14 @@ class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    phase: Optional[str] = None
     start_date: Optional[date] = None
     target_end_date: Optional[date] = None
     department_id: Optional[str] = None
+
+
+class ProjectPhaseUpdate(BaseModel):
+    phase: str
 
 
 class ProjectAssignInternsRequest(BaseModel):
@@ -38,6 +44,7 @@ class ProjectOut(BaseModel):
     name: str
     description: Optional[str] = None
     status: str
+    phase: str = "DEVELOPMENT"
     start_date: Optional[date] = None
     target_end_date: Optional[date] = None
     department_id: Optional[UUID] = None  # UUID from ORM → serialised as string in JSON

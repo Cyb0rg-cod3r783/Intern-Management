@@ -123,7 +123,7 @@ def accept_approval_request(
         # Notify Admin who created or all admins
         notify_admins(
             db,
-            "✅ Intern Accepted",
+            "Intern Accepted",
             f"Manager {current_user.full_name} accepted intern '{profile.user.full_name}' into {target_dept_name}.",
             "INTERN_ACCEPTED",
             f"/admin/interns"
@@ -132,7 +132,7 @@ def accept_approval_request(
         notify(
             db,
             profile.user_id,
-            "🎉 Department Assignment Confirmed",
+            "Department Assignment Confirmed",
             f"Welcome! Your onboarding into {target_dept_name} has been accepted by Manager {current_user.full_name}.",
             "ONBOARDING_ACCEPTED",
             "/intern/profile"
@@ -159,7 +159,7 @@ def accept_approval_request(
             
         notify_admins(
             db,
-            "✅ Department Transfer Accepted",
+            "Department Transfer Accepted",
             f"Manager {current_user.full_name} accepted department transfer for '{profile.user.full_name}' to {target_dept_name}.",
             "TRANSFER_ACCEPTED",
             f"/admin/interns"
@@ -222,7 +222,7 @@ def reject_approval_request(
         )
         notify_admins(
             db,
-            "⚠️ Intern Onboarding Declined",
+            "Intern Onboarding Declined",
             f"Manager {current_user.full_name} declined onboarding for '{profile.user.full_name}'. Reason: '{reason}'",
             "INTERN_REJECTED",
             f"/admin/interns"
@@ -239,7 +239,7 @@ def reject_approval_request(
         )
         notify_admins(
             db,
-            "⚠️ Transfer Request Declined",
+            "Transfer Request Declined",
             f"Manager {current_user.full_name} declined department transfer for '{profile.user.full_name}'. Reason: '{reason}'",
             "TRANSFER_REJECTED",
             f"/admin/interns"
