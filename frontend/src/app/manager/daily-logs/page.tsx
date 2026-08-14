@@ -18,6 +18,12 @@ export default function ManagerDailyLogsPage() {
   const [sendingReminder, setSendingReminder] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // Full history for a single selected intern (replaces the single-day feed
+  // below once an intern is picked from the dropdown, instead of just
+  // filtering that one day down to one person).
+  const [internHistory, setInternHistory] = useState<DailyLog[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   // Load team interns
   useEffect(() => {
     if (!user) return;
@@ -25,6 +31,19 @@ export default function ManagerDailyLogsPage() {
       .then(setTeamProfiles)
       .catch(() => {});
   }, [user]);
+
+  // Load full log history whenever a specific intern is selected.
+  useEffect(() => {
+    if (!selectedInternId) {
+      setInternHistory([]);
+      return;
+    }
+    setLoadingHistory(true);
+    dailyLogsApi.getInternLogs(selectedInternId, 90)
+      .then(setInternHistory)
+      .catch(() => setInternHistory([]))
+      .finally(() => setLoadingHistory(false));
+  }, [selectedInternId]);
 
   // Load logs for date
   const loadData = () => {
@@ -61,6 +80,7 @@ export default function ManagerDailyLogsPage() {
 
   const filteredLogs = data ? data.logs.filter(l => !selectedInternId || l.intern_id === selectedInternId) : [];
   const filteredSummary = data ? data.team_summary.filter(s => !selectedInternId || s.intern_id === selectedInternId) : [];
+  const selectedInternName = teamProfiles.find(p => p.user_id === selectedInternId)?.full_name || "Intern";
 
   return (
     <AppShell requiredRole="MANAGER">
@@ -82,7 +102,7 @@ export default function ManagerDailyLogsPage() {
             <option value="">All Department Interns</option>
             {teamProfiles.map((p) => (
               <option key={p.user_id} value={p.user_id}>
-                {p.user?.full_name || p.new_tk_id || "Intern"}
+                {p.full_name || p.new_tk_id || "Intern"}
               </option>
             ))}
           </select>
@@ -111,6 +131,13 @@ export default function ManagerDailyLogsPage() {
           />
         </div>
       </div>
+
+      {selectedInternId && (
+        <div style={{ padding: "8px 14px", background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "var(--radius-md)", fontSize: 12, color: "var(--color-primary)", marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
+          <InfoIcon />
+          Showing {selectedInternName}&apos;s complete log history on the left. The date picker above only affects their status in the roster panel on the right — pick &quot;All Department Interns&quot; to return to the team-wide daily view.
+        </div>
+      )}
 
       {msg && (
         <div style={{ padding: "10px 14px", background: "rgba(59, 130, 246, 0.1)", border: "1px solid rgba(59, 130, 246, 0.3)", borderRadius: "var(--radius-md)", fontSize: 13, color: "var(--color-primary)", marginBottom: 20 }}>
@@ -152,73 +179,46 @@ export default function ManagerDailyLogsPage() {
 
           {/* Roster & Log Activity Feed */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 24 }}>
-            {/* Left: Detailed Submission Feed for Date */}
+            {/* Left: Detailed Submission Feed — full history when an intern is
+                selected, otherwise the single-day feed for the whole team */}
             <div className="card">
-              <h2 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 16px 0", color: "var(--color-text)" }}>
-                Task &amp; Accomplishment Logs ({formatDate(targetDate)})
-              </h2>
+              {selectedInternId ? (
+                <>
+                  <h2 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 4px 0", color: "var(--color-text)" }}>
+                    Full Daily Log History — {selectedInternName}
+                  </h2>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "0 0 16px 0" }}>
+                    {loadingHistory ? "Loading…" : `Showing the last ${internHistory.length} submitted log${internHistory.length !== 1 ? "s" : ""}`}
+                  </p>
 
-              {filteredLogs.length === 0 ? (
-                <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--color-text-muted)", fontSize: 13 }}>
-                  No work logs submitted for {formatDate(targetDate)} matching current filter.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  {filteredLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      style={{
-                        background: "var(--color-surface-2)",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: "var(--radius-md)",
-                        padding: "16px 18px",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 15, color: "var(--color-text)" }}>{log.intern_name}</div>
-                          <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{log.intern_email}</div>
-                        </div>
-                        <span className="badge badge-success" style={{ fontWeight: 800, fontSize: 12, padding: "4px 10px" }}>
-                          {log.total_hours} hrs logged
-                        </span>
-                      </div>
-
-                      {log.summary_notes && (
-                        <div style={{ background: "var(--color-surface-1)", borderRadius: "var(--radius-sm)", padding: "10px 12px", marginBottom: 12, fontSize: 13, color: "var(--color-text)", lineHeight: 1.4 }}>
-                          <strong>Daily Summary:</strong> {log.summary_notes}
-                        </div>
-                      )}
-
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", marginBottom: 8 }}>
-                        Task Breakdown ({log.entries.length} Tasks)
-                      </div>
-
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {log.entries.map((e) => (
-                          <div key={e.id} style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 13, color: "var(--color-text)", marginBottom: 2 }}>
-                              <span>• {e.task_title || "General Task Activity"}</span>
-                              <span style={{ color: "var(--color-primary)" }}>{e.hours_spent}h</span>
-                            </div>
-
-                            {e.project_name && (
-                              <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}>
-                                Project: {e.project_name}
-                              </div>
-                            )}
-
-                            {e.description && (
-                              <div style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.4 }}>
-                                {e.description}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                  {loadingHistory ? (
+                    <div className="loading-overlay" style={{ position: "relative", minHeight: 120 }}><div className="spinner" /></div>
+                  ) : internHistory.length === 0 ? (
+                    <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--color-text-muted)", fontSize: 13 }}>
+                      {selectedInternName} hasn&apos;t submitted any daily logs yet.
                     </div>
-                  ))}
-                </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      {internHistory.map((log) => <LogEntryCard key={log.id} log={log} showDate />)}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <h2 style={{ fontSize: 17, fontWeight: 700, margin: "0 0 16px 0", color: "var(--color-text)" }}>
+                    Task &amp; Accomplishment Logs ({formatDate(targetDate)})
+                  </h2>
+
+                  {filteredLogs.length === 0 ? (
+                    <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--color-text-muted)", fontSize: 13 }}>
+                      No work logs submitted for {formatDate(targetDate)} matching current filter.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      {filteredLogs.map((log) => <LogEntryCard key={log.id} log={log} />)}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -291,6 +291,76 @@ export default function ManagerDailyLogsPage() {
         </>
       )}
     </AppShell>
+  );
+}
+
+function LogEntryCard({ log, showDate }: { log: DailyLog; showDate?: boolean }) {
+  return (
+    <div
+      style={{
+        background: "var(--color-surface-2)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-md)",
+        padding: "16px 18px",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div>
+          {showDate ? (
+            <div style={{ fontWeight: 700, fontSize: 15, color: "var(--color-text)" }}>{formatDate(log.log_date)}</div>
+          ) : (
+            <div style={{ fontWeight: 700, fontSize: 15, color: "var(--color-text)" }}>{log.intern_name}</div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{log.intern_email}</div>
+        </div>
+        <span className="badge badge-success" style={{ fontWeight: 800, fontSize: 12, padding: "4px 10px" }}>
+          {log.total_hours} hrs logged
+        </span>
+      </div>
+
+      {log.summary_notes && (
+        <div style={{ background: "var(--color-surface-1)", borderRadius: "var(--radius-sm)", padding: "10px 12px", marginBottom: 12, fontSize: 13, color: "var(--color-text)", lineHeight: 1.4 }}>
+          <strong>Daily Summary:</strong> {log.summary_notes}
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", marginBottom: 8 }}>
+        Task Breakdown ({log.entries.length} Tasks)
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {log.entries.map((e) => (
+          <div key={e.id} style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 13, color: "var(--color-text)", marginBottom: 2 }}>
+              <span>• {e.task_title || "General Task Activity"}</span>
+              <span style={{ color: "var(--color-primary)" }}>{e.hours_spent}h</span>
+            </div>
+
+            {e.project_name && (
+              <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}>
+                Project: {e.project_name}
+              </div>
+            )}
+
+            {e.description && (
+              <div style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.4 }}>
+                {e.description}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14, flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
   );
 }
 

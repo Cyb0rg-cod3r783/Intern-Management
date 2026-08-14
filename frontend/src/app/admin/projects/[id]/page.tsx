@@ -70,6 +70,11 @@ export default function ProjectDetailsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState("");
 
+  // Inline Due-Date editing (Project Tasks table)
+  const [editingDueDateId, setEditingDueDateId] = useState<string | null>(null);
+  const [dueDateDraft, setDueDateDraft] = useState("");
+  const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
+
   const fetchProjectData = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -138,6 +143,40 @@ export default function ProjectDetailsPage() {
       setTaskError(err.message || "Failed to create task.");
     } finally {
       setCreatingTask(false);
+    }
+  };
+
+  const startEditDueDate = (task: Task) => {
+    setEditingDueDateId(task.id);
+    setDueDateDraft(task.due_date || "");
+  };
+
+  const cancelEditDueDate = () => {
+    setEditingDueDateId(null);
+    setDueDateDraft("");
+  };
+
+  const saveDueDate = async (task: Task) => {
+    // Nothing changed — just close the editor, no need to hit the API.
+    if (dueDateDraft === (task.due_date || "")) {
+      setEditingDueDateId(null);
+      return;
+    }
+    if (!dueDateDraft) {
+      // Backend leaves fields it receives as null untouched (can't clear via
+      // this endpoint), so don't send a request that would silently no-op.
+      setEditingDueDateId(null);
+      return;
+    }
+    setSavingDueDateId(task.id);
+    try {
+      const updated = await tasksApi.update(task.id, { due_date: dueDateDraft });
+      setProjectTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, due_date: updated.due_date } : t)));
+      setEditingDueDateId(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to update due date.");
+    } finally {
+      setSavingDueDateId(null);
     }
   };
 
@@ -352,7 +391,53 @@ export default function ProjectDetailsPage() {
                     </td>
                     <td style={{ fontSize: 13 }}>{t.intern_name || "—"}</td>
                     <td><PriorityBadge priority={t.priority} /></td>
-                    <td style={{ fontSize: 13 }}>{formatDate(t.due_date)}</td>
+                    <td style={{ fontSize: 13 }}>
+                      {(isAdmin || isManager) ? (
+                        editingDueDateId === t.id ? (
+                          <input
+                            type="date"
+                            autoFocus
+                            className="form-input"
+                            style={{ fontSize: 12, padding: "4px 6px", width: 138 }}
+                            value={dueDateDraft}
+                            disabled={savingDueDateId === t.id}
+                            onChange={(e) => setDueDateDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.currentTarget.blur(); }
+                              if (e.key === "Escape") cancelEditDueDate();
+                            }}
+                            onBlur={() => saveDueDate(t)}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startEditDueDate(t)}
+                            title="Click to set due date"
+                            style={{
+                              background: "none",
+                              border: "1px dashed transparent",
+                              cursor: "pointer",
+                              padding: "3px 6px",
+                              margin: "-3px -6px",
+                              borderRadius: 4,
+                              fontSize: 13,
+                              color: t.due_date ? "var(--color-text)" : "var(--color-text-dim)",
+                              fontStyle: t.due_date ? "normal" : "italic",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 5,
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--color-border)"; e.currentTarget.style.background = "var(--color-surface-2)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.background = "none"; }}
+                          >
+                            {t.due_date ? formatDate(t.due_date) : "Set due date"}
+                            <CalendarIcon />
+                          </button>
+                        )
+                      ) : (
+                        formatDate(t.due_date)
+                      )}
+                    </td>
                     <td><StatusBadge status={t.status} /></td>
                   </tr>
                 ))}
@@ -387,7 +472,7 @@ export default function ProjectDetailsPage() {
               {(() => {
                 const targetDeptId = project.department?.id || project.department_id;
                 const filteredInterns = targetDeptId
-                  ? allInterns.filter((i) => (i.department?.id || i.department_id) === targetDeptId)
+                  ? allInterns.filter((i) => i.department?.id === targetDeptId)
                   : allInterns;
 
                 if (filteredInterns.length === 0) {
@@ -569,4 +654,7 @@ function EditIcon() {
 }
 function CheckIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+}
+function CalendarIcon() {
+  return <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6, flexShrink: 0 }}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
 }

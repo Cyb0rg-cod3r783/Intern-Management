@@ -11,7 +11,7 @@ from app.models.intern_history_log import InternHistoryLog
 from app.models.daily_work_log import DailyWorkLog, DailyWorkLogEntry
 from app.models.security import BlacklistedToken, LoginAttempt
 from app.models.enums import (
-    UserRole, InternStatus, TaskStatus, TaskPriority,
+    UserRole, InternStatus, TaskStatus, TaskPriority, TaskApprovalStatus,
     HandoverStatus, AuditAction
 )
 
@@ -36,6 +36,7 @@ __all__ = [
     "InternStatus",
     "TaskStatus",
     "TaskPriority",
+    "TaskApprovalStatus",
     "HandoverStatus",
     "AuditAction",
 ]

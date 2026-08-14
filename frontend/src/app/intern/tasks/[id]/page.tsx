@@ -48,9 +48,22 @@ export default function TaskDetailPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">{task.title}</h1>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
             <StatusBadge status={task.is_overdue ? "OVERDUE" : task.status} />
             <StatusBadge status={task.priority} />
+            {task.approval_status === "PENDING" && (
+              <span className="badge" style={{ background: "rgba(245,158,11,0.14)", color: "#d97706", fontSize: 11, fontWeight: 700, padding: "3px 8px" }}>
+                Pending Manager Approval
+              </span>
+            )}
+            {task.approval_status === "REJECTED" && (
+              <span className="badge" style={{ background: "rgba(239,68,68,0.12)", color: "#ef4444", fontSize: 11, fontWeight: 700, padding: "3px 8px" }}>
+                Rejected
+              </span>
+            )}
+            {task.project_name && (
+              <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Project: {task.project_name}</span>
+            )}
             {task.due_date && (
               <span style={{ fontSize: 13, color: task.is_overdue ? "var(--color-danger)" : "var(--color-text-muted)" }}>
                 Due: {formatDate(task.due_date)}
@@ -59,6 +72,17 @@ export default function TaskDetailPage() {
           </div>
         </div>
       </div>
+
+      {task.approval_status === "PENDING" && (
+        <div className="alert" style={{ marginBottom: 16, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", color: "#d97706", fontSize: 13 }}>
+          This task is awaiting your manager&apos;s approval before it counts as officially assigned.
+        </div>
+      )}
+      {task.approval_status === "REJECTED" && (
+        <div className="alert alert-danger" style={{ marginBottom: 16, fontSize: 13 }}>
+          Your manager rejected this self-assigned task.{task.rejection_reason ? ` Reason: ${task.rejection_reason}` : ""}
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 20 }}>
         {/* Left: Progress timeline */}

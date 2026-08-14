@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
-import { internsApi, tasksApi, managerApi, dailyLogsApi, InternProfile, Task, ProjectTaskHealthResponse, EndingSoonResponse, ManagerDailyLogsResponse } from "@/lib/api";
+import { internsApi, tasksApi, managerApi, dailyLogsApi, InternProfile, Task, ProjectTaskHealthResponse, EndingSoonResponse, ManagerDailyLogsResponse, DailyLog } from "@/lib/api";
 import { StatusBadge, formatDate } from "@/components/ui-utils";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";

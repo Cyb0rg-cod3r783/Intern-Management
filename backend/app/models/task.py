@@ -4,7 +4,7 @@ from sqlalchemy import Column, String, Text, Date, DateTime, ForeignKey, Enum as
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, foreign
 from app.database import Base
-from app.models.enums import TaskStatus, TaskPriority
+from app.models.enums import TaskStatus, TaskPriority, TaskApprovalStatus
 
 
 class Task(Base):
@@ -26,6 +26,11 @@ class Task(Base):
     # status != COMPLETED AND due_date < today
     status = Column(SAEnum(TaskStatus), default=TaskStatus.NOT_STARTED, nullable=False)
     priority = Column(SAEnum(TaskPriority), default=TaskPriority.MEDIUM, nullable=False)
+
+    # APPROVED for anything an Admin/Manager assigns directly; PENDING when an
+    # Intern self-assigns a task under a project (awaiting their Manager's sign-off).
+    approval_status = Column(SAEnum(TaskApprovalStatus), default=TaskApprovalStatus.APPROVED, nullable=False)
+    rejection_reason = Column(String, nullable=True)
 
     evidence_link = Column(String, nullable=True)
 

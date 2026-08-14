@@ -108,7 +108,7 @@ export const internsApi = {
   get: (internId: string) => request<InternProfile>(`/interns/${internId}`),
   create: (data: CreateInternRequest) =>
     request<InternProfile>("/interns/", { method: "POST", body: JSON.stringify(data) }),
-  update: (internId: string, data: Partial<InternProfile>) =>
+  update: (internId: string, data: InternUpdatePayload) =>
     request<InternProfile>(`/interns/${internId}`, { method: "PUT", body: JSON.stringify(data) }),
   deactivate: (internId: string) =>
     request(`/interns/${internId}`, { method: "DELETE" }),
@@ -135,6 +135,10 @@ export const tasksApi = {
     request<Task>(`/tasks/${taskId}`, { method: "PUT", body: JSON.stringify(data) }),
   addProgressUpdate: (taskId: string, note: string) =>
     request(`/tasks/${taskId}/updates`, { method: "POST", body: JSON.stringify({ note }) }),
+  approve: (taskId: string) =>
+    request<Task>(`/tasks/${taskId}/approve`, { method: "POST" }),
+  reject: (taskId: string, rejection_reason?: string) =>
+    request<Task>(`/tasks/${taskId}/reject`, { method: "POST", body: JSON.stringify({ rejection_reason }) }),
 };
 
 // ─── Handovers ─────────────────────────────────────────────────────────────────
@@ -383,6 +387,18 @@ export interface InternProfile {
   updated_at?: string;
 }
 
+/**
+ * PUT /interns/{id} body shape. Distinct from InternProfile (the GET response)
+ * because the backend's InternUpdateAdminRequest/InternUpdateManagerRequest
+ * schemas take flat foreign-key fields (`department_id`, `reporting_manager_id`)
+ * rather than the nested `department`/`reporting_manager` objects the read
+ * model returns — sending the nested objects back would be silently ignored.
+ */
+export type InternUpdatePayload = Partial<Omit<InternProfile, "department" | "reporting_manager">> & {
+  department_id?: string;
+  reporting_manager_id?: string;
+};
+
 export interface CreateInternRequest {
   full_name: string;
   company_email: string;
@@ -434,6 +450,11 @@ export interface Task {
   completed_date?: string;
   status: "NOT_STARTED" | "IN_PROGRESS" | "BLOCKED" | "COMPLETED";
   priority: "LOW" | "MEDIUM" | "HIGH";
+  // APPROVED: normal/live task (the default for anything Admin/Manager assigns).
+  // PENDING: an Intern self-assigned this under a project and it's awaiting
+  // their Manager's/an Admin's sign-off. REJECTED: it was declined.
+  approval_status: "APPROVED" | "PENDING" | "REJECTED";
+  rejection_reason?: string;
   evidence_link?: string;
   is_overdue: boolean;
   updates: TaskUpdate[];
@@ -633,6 +654,9 @@ export interface ProjectCostAssignedIntern {
   company_email: string;
   stipend_amount: number;
   is_paid: boolean;
+  // Only present in Department-cost responses (admin/analytics/department-costs) —
+  // the Project-cost endpoint doesn't include it.
+  new_tk_id?: string;
 }
 
 export interface ProjectCostItem {

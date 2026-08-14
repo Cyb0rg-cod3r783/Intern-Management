@@ -1020,7 +1020,7 @@ function ProjectFinancialAnalyticsSection() {
                     return (
                       <Fragment key={p.id}>
                         <tr>
-                          <td style={{ fontWeight: 600, color: "var(--color-text)", maxWdith: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.name}>
+                          <td style={{ fontWeight: 600, color: "var(--color-text)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.name}>
                             <Link href={`/admin/projects/${p.id}`} style={{ color: "inherit", textDecoration: "none" }}>
                               {p.name}
                             </Link>

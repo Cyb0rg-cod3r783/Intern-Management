@@ -36,8 +36,11 @@ export default function AdminInternsPage() {
     if (!user) return;
     setLoading(true);
     try {
+      // Department/Status/Manager are still narrowed server-side (cheaper payload).
+      // The free-text search below matches every visible column and runs client-side
+      // so it can also match Department/Manager/Joining/End Date/Status text, not just
+      // name/email/TK ID.
       const data = await internsApi.list({
-        search: search || undefined,
         department_id: deptFilter || undefined,
         status: statusFilter || undefined,
         manager_id: managerFilter || undefined,
@@ -48,7 +51,30 @@ export default function AdminInternsPage() {
     } finally {
       setLoading(false);
     }
-  }, [user, search, deptFilter, statusFilter, managerFilter]);
+  }, [user, deptFilter, statusFilter, managerFilter]);
+
+  // Single search bar — matches Name, Company Email, TK ID, Department, Manager,
+  // Joining Date, End Date, and Status all at once.
+  const filteredInterns = interns.filter((intern) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const haystack = [
+      intern.full_name,
+      intern.company_email,
+      intern.new_tk_id,
+      intern.department?.name,
+      intern.reporting_manager?.full_name,
+      intern.joining_date,
+      formatDate(intern.joining_date),
+      intern.end_date,
+      formatDate(intern.end_date),
+      intern.status,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(q);
+  });
 
   useEffect(() => {
     if (!user) return;
@@ -58,11 +84,21 @@ export default function AdminInternsPage() {
     fetchInterns();
   }, [user, fetchInterns]);
 
+  const allVisibleSelected = filteredInterns.length > 0 && filteredInterns.every((i) => selectedUserIds.has(i.user_id));
+
   const toggleSelectAll = () => {
-    if (selectedUserIds.size === interns.length && interns.length > 0) {
-      setSelectedUserIds(new Set());
+    if (allVisibleSelected) {
+      setSelectedUserIds((prev) => {
+        const next = new Set(prev);
+        filteredInterns.forEach((i) => next.delete(i.user_id));
+        return next;
+      });
     } else {
-      setSelectedUserIds(new Set(interns.map((i) => i.user_id)));
+      setSelectedUserIds((prev) => {
+        const next = new Set(prev);
+        filteredInterns.forEach((i) => next.add(i.user_id));
+        return next;
+      });
     }
   };
 
@@ -89,7 +125,7 @@ export default function AdminInternsPage() {
 
   const handleConfirmSingleDelete = async () => {
     if (!deletingIntern) return;
-    if (confirmEmailInput.trim().toLowerCase() !== deletingIntern.company_email.trim().toLowerCase()) {
+    if (confirmEmailInput.trim().toLowerCase() !== (deletingIntern.company_email || "").trim().toLowerCase()) {
       alert("Email address does not match. Please enter the exact email to confirm deletion.");
       return;
     }
@@ -131,7 +167,13 @@ export default function AdminInternsPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Intern Management</h1>
-          <p className="page-subtitle">{interns.length} intern{interns.length !== 1 ? "s" : ""} found</p>
+          <p className="page-subtitle">
+            {search.trim() ? (
+              <>{filteredInterns.length} of {interns.length} intern{interns.length !== 1 ? "s" : ""} match</>
+            ) : (
+              <>{interns.length} intern{interns.length !== 1 ? "s" : ""} found</>
+            )}
+          </p>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button id="btn-bulk-import" type="button" className="btn btn-secondary" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => setShowBulkModal(true)}>
@@ -156,7 +198,7 @@ export default function AdminInternsPage() {
             id="intern-search"
             type="text"
             className="form-input search-input"
-            placeholder="Search name, email, TK ID…"
+            placeholder="Search name, email, TK ID, department, manager, dates, status…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -247,9 +289,9 @@ export default function AdminInternsPage() {
                   <input
                     type="checkbox"
                     style={{ cursor: "pointer", width: 16, height: 16 }}
-                    checked={interns.length > 0 && selectedUserIds.size === interns.length}
+                    checked={allVisibleSelected}
                     onChange={toggleSelectAll}
-                    title="Select All"
+                    title="Select All Visible"
                   />
                 </th>
                 <th>Name</th>
@@ -264,7 +306,13 @@ export default function AdminInternsPage() {
               </tr>
             </thead>
             <tbody>
-              {interns.map((intern) => (
+              {filteredInterns.length === 0 ? (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: "center", padding: "32px 16px", color: "var(--color-text-muted)" }}>
+                    No interns match &quot;{search}&quot;.
+                  </td>
+                </tr>
+              ) : filteredInterns.map((intern) => (
                 <tr key={intern.id}>
                   <td style={{ width: 40, textAlign: "center" }}>
                     <input
@@ -372,7 +420,7 @@ export default function AdminInternsPage() {
               <button
                 type="button"
                 className="btn btn-danger"
-                disabled={confirmEmailInput.trim().toLowerCase() !== deletingIntern?.company_email.trim().toLowerCase() || isSubmittingDelete}
+                disabled={confirmEmailInput.trim().toLowerCase() !== (deletingIntern?.company_email || "").trim().toLowerCase() || isSubmittingDelete}
                 onClick={handleConfirmSingleDelete}
               >
                 {isSubmittingDelete ? "Deleting…" : "Permanently Delete"}

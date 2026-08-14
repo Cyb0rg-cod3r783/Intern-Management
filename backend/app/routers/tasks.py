@@ -6,9 +6,9 @@ from sqlalchemy import or_
 from datetime import date
 
 from app.database import get_db
-from app.models import User, UserRole, Task, TaskUpdate, InternProfile, AuditAction
-from app.models.enums import TaskStatus
-from app.schemas.task import TaskOut, TaskUpdateOut, TaskCreateRequest, TaskUpdateRequest, TaskProgressUpdateRequest
+from app.models import User, UserRole, Task, TaskUpdate, InternProfile, AuditAction, project_interns
+from app.models.enums import TaskStatus, TaskApprovalStatus
+from app.schemas.task import TaskOut, TaskUpdateOut, TaskCreateRequest, TaskUpdateRequest, TaskProgressUpdateRequest, TaskRejectRequest
 from app.middleware.rbac import (
     get_current_user, require_admin_or_manager,
     assert_can_manage_task,
@@ -148,10 +148,23 @@ def create_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if current_user.role == UserRole.INTERN:
-        # Intern can only self-assign and cannot set due_date
+    is_self_assign = current_user.role == UserRole.INTERN
+
+    if is_self_assign:
+        # Intern can only self-assign, cannot set due_date, and must tie the
+        # task to a project they're actually on — mirrors the real workflow:
+        # interns divide up the work amongst themselves and send it to their
+        # manager for approval before it's a "real" task.
         body.intern_id = current_user.id
         body.due_date = None
+        if not body.project_id:
+            raise HTTPException(status_code=400, detail="Select a project — self-assigned tasks must be tied to one of your projects.")
+        is_member = db.query(project_interns).filter(
+            project_interns.c.project_id == body.project_id,
+            project_interns.c.user_id == current_user.id,
+        ).first()
+        if not is_member:
+            raise HTTPException(status_code=403, detail="You can only self-assign tasks under projects you're a member of.")
     elif not body.intern_id:
         raise HTTPException(status_code=400, detail="intern_id is required when creating a task as Admin or Manager.")
 
@@ -172,11 +185,12 @@ def create_task(
         priority=body.priority,
         status=body.status,
         evidence_link=body.evidence_link,
+        approval_status=TaskApprovalStatus.PENDING if is_self_assign else TaskApprovalStatus.APPROVED,
     )
     db.add(task)
     log_action(db, str(current_user.id), AuditAction.CREATE_TASK,
                target_type="task", target_id=None,
-               metadata={"intern_id": str(body.intern_id), "title": body.title})
+               metadata={"intern_id": str(body.intern_id), "title": body.title, "self_assigned": is_self_assign})
     db.commit()
     db.refresh(task)
 
@@ -188,8 +202,81 @@ def create_task(
             "NEW_TASK", f"/intern/tasks/{task.id}"
         )
         db.commit()
+    elif is_self_assign and intern_profile.reporting_manager_id:
+        # Trigger: Intern self-assigned task -> notify their Manager for approval
+        notify(
+            db, intern_profile.reporting_manager_id, "Task Approval Requested",
+            f"{current_user.full_name} self-assigned task '{task.title}' and needs your approval.",
+            "TASK_APPROVAL_REQUEST", "/manager/tasks"
+        )
+        db.commit()
 
     return _build_task_out(_load_task(db, str(task.id)))
+
+
+# ─── POST /tasks/{task_id}/approve ─────────────────────────────────────────────
+@router.post("/{task_id}/approve", response_model=TaskOut)
+def approve_task(
+    task_id: str,
+    current_user: User = Depends(require_admin_or_manager),
+    db: Session = Depends(get_db),
+):
+    """Manager/Admin approves an intern's self-assigned task."""
+    task = _load_task(db, task_id)
+    intern_profile = _get_intern_profile(db, str(task.intern_id))
+    assert_can_manage_task(current_user, task, intern_profile)
+
+    if task.approval_status != TaskApprovalStatus.PENDING:
+        raise HTTPException(status_code=400, detail=f"Task is already {task.approval_status.value.lower()}.")
+
+    task.approval_status = TaskApprovalStatus.APPROVED
+    task.rejection_reason = None
+    log_action(db, str(current_user.id), AuditAction.APPROVE_TASK,
+               target_type="task", target_id=task_id)
+    db.commit()
+
+    notify(
+        db, task.intern_id, "Task Approved",
+        f"{current_user.full_name} approved your self-assigned task '{task.title}'.",
+        "TASK_APPROVED", f"/intern/tasks/{task.id}"
+    )
+    db.commit()
+
+    return _build_task_out(_load_task(db, task_id))
+
+
+# ─── POST /tasks/{task_id}/reject ──────────────────────────────────────────────
+@router.post("/{task_id}/reject", response_model=TaskOut)
+def reject_task(
+    task_id: str,
+    body: TaskRejectRequest,
+    current_user: User = Depends(require_admin_or_manager),
+    db: Session = Depends(get_db),
+):
+    """Manager/Admin rejects an intern's self-assigned task."""
+    task = _load_task(db, task_id)
+    intern_profile = _get_intern_profile(db, str(task.intern_id))
+    assert_can_manage_task(current_user, task, intern_profile)
+
+    if task.approval_status != TaskApprovalStatus.PENDING:
+        raise HTTPException(status_code=400, detail=f"Task is already {task.approval_status.value.lower()}.")
+
+    task.approval_status = TaskApprovalStatus.REJECTED
+    task.rejection_reason = body.rejection_reason
+    log_action(db, str(current_user.id), AuditAction.REJECT_TASK,
+               target_type="task", target_id=task_id,
+               metadata={"reason": body.rejection_reason})
+    db.commit()
+
+    reason_text = f" Reason: {body.rejection_reason}" if body.rejection_reason else ""
+    notify(
+        db, task.intern_id, "Task Rejected",
+        f"{current_user.full_name} rejected your self-assigned task '{task.title}'.{reason_text}",
+        "TASK_REJECTED", f"/intern/tasks/{task.id}"
+    )
+    db.commit()
+
+    return _build_task_out(_load_task(db, task_id))
 
 
 # ─── PUT /tasks/{task_id} ──────────────────────────────────────────────────────
@@ -209,6 +296,13 @@ def update_task(
     if current_user.role == UserRole.INTERN:
         # Interns cannot update due_date
         body.due_date = None
+        if body.project_id is not None:
+            is_member = db.query(project_interns).filter(
+                project_interns.c.project_id == body.project_id,
+                project_interns.c.user_id == current_user.id,
+            ).first()
+            if not is_member:
+                raise HTTPException(status_code=403, detail="You can only tie tasks to projects you're a member of.")
 
     for field in ["title", "description", "project_id", "due_date", "status", "priority",
                   "evidence_link", "completed_date"]:

@@ -760,7 +760,7 @@ function TransferDepartmentModal({ intern, onClose, onSuccess }: { intern: Inter
   const [error, setError] = useState("");
 
   useEffect(() => {
-    adminApi.departments().then(setDepartments).catch(() => {});
+    departmentsApi.list().then(setDepartments).catch(() => {});
     adminApi.users().then((users) => {
       setManagers(users.filter((u) => u.role === "MANAGER"));
     }).catch(() => {});

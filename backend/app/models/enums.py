@@ -29,6 +29,19 @@ class TaskPriority(str, enum.Enum):
     HIGH = "HIGH"
 
 
+class TaskApprovalStatus(str, enum.Enum):
+    """
+    APPROVED: task is live — the default for anything an Admin/Manager creates
+    directly (no approval step needed).
+    PENDING: an Intern self-assigned this task under a project and it's
+    awaiting their reporting Manager's (or an Admin's) sign-off.
+    REJECTED: a Manager/Admin declined the intern's self-assigned task.
+    """
+    APPROVED = "APPROVED"
+    PENDING = "PENDING"
+    REJECTED = "REJECTED"
+
+
 class HandoverStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     IN_PROGRESS = "IN_PROGRESS"
@@ -65,3 +78,5 @@ class AuditAction(str, enum.Enum):
     UPDATE_PROJECT = "UPDATE_PROJECT"
     DELETE_PROJECT = "DELETE_PROJECT"
     UPDATE_USER = "UPDATE_USER"
+    APPROVE_TASK = "APPROVE_TASK"
+    REJECT_TASK = "REJECT_TASK"

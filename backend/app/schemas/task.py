@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, field_validator
-from app.models.enums import TaskStatus, TaskPriority
+from app.models.enums import TaskStatus, TaskPriority, TaskApprovalStatus
 
 
 def _validate_safe_url(value: Optional[str]) -> Optional[str]:
@@ -49,6 +49,8 @@ class TaskOut(BaseModel):
     completed_date: Optional[date] = None
     status: TaskStatus
     priority: TaskPriority
+    approval_status: TaskApprovalStatus = TaskApprovalStatus.APPROVED
+    rejection_reason: Optional[str] = None
     evidence_link: Optional[str] = None
     is_overdue: bool = False
     updates: List[TaskUpdateOut] = []
@@ -86,3 +88,7 @@ class TaskUpdateRequest(BaseModel):
 
 class TaskProgressUpdateRequest(BaseModel):
     note: str
+
+
+class TaskRejectRequest(BaseModel):
+    rejection_reason: Optional[str] = None

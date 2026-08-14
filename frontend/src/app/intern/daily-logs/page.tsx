@@ -31,7 +31,9 @@ export default function InternDailyLogsPage() {
     setLoading(true);
     try {
       const [tasks, history] = await Promise.all([
-        tasksApi.list({ my_tasks_only: true }),
+        // No params needed — GET /tasks/ already scopes to the caller's own
+        // tasks for the Intern role server-side.
+        tasksApi.list(),
         dailyLogsApi.getMyLogs(30),
       ]);
       const activeTasks = tasks.filter(t => t.status !== "COMPLETED");

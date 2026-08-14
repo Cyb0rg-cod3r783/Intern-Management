@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
-import { tasksApi, Task, internsApi, InternProfile } from "@/lib/api";
+import { tasksApi, Task, internsApi, InternProfile, projectsApi, Project } from "@/lib/api";
 import { StatusBadge, formatDate, formatDateTime } from "@/components/ui-utils";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
@@ -12,14 +12,23 @@ export default function TasksPage() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [interns, setInterns] = useState<InternProfile[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTaskForUpdates, setSelectedTaskForUpdates] = useState<Task | null>(null);
+  const [pendingOnly, setPendingOnly] = useState(false);
+
+  // Task approval workflow (intern self-assigned tasks)
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectingTask, setRejectingTask] = useState<Task | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
 
   // Form state
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedInternId, setSelectedInternId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -35,9 +44,11 @@ export default function TasksPage() {
     Promise.all([
       tasksApi.list({ status: statusFilter || undefined, priority: priorityFilter || undefined, overdue_only: overdueOnly || undefined }),
       internsApi.list(),
-    ]).then(([tList, iList]) => {
+      projectsApi.list(),
+    ]).then(([tList, iList, pList]) => {
       setTasks(tList);
       setInterns(iList);
+      setProjects(pList);
       if (selectedTaskForUpdates) {
         const updated = tList.find((t) => t.id === selectedTaskForUpdates.id);
         if (updated) setSelectedTaskForUpdates(updated);
@@ -47,12 +58,24 @@ export default function TasksPage() {
     }).finally(() => setLoading(false));
   };
 
+  const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
+  // Tasks are assigned to people working under a project — once a project is
+  // picked, only interns in that project's department are assignable.
+  // Company-wide projects (no department) don't restrict the list.
+  const assignableInterns = selectedProject?.department
+    ? interns.filter((i) => i.department?.id === selectedProject.department?.id)
+    : interns;
+
   useEffect(() => {
     if (user) loadTasks();
   }, [user, statusFilter, priorityFilter, overdueOnly]);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedProjectId) {
+      setError("Please select a project — tasks are assigned under a project.");
+      return;
+    }
     if (!title.trim()) {
       setError("Task title is required.");
       return;
@@ -67,6 +90,7 @@ export default function TasksPage() {
     try {
       await tasksApi.create({
         intern_id: selectedInternId,
+        project_id: selectedProjectId,
         title: title.trim(),
         description: description.trim() || undefined,
         priority,
@@ -75,6 +99,7 @@ export default function TasksPage() {
       });
 
       // Reset form & close modal
+      setSelectedProjectId("");
       setSelectedInternId("");
       setTitle("");
       setDescription("");
@@ -90,6 +115,43 @@ export default function TasksPage() {
       setSubmitting(false);
     }
   };
+
+  const handleProjectChange = (projectId: string) => {
+    setSelectedProjectId(projectId);
+    // Reset intern selection — the previously chosen intern might not
+    // belong to the newly selected project's department.
+    setSelectedInternId("");
+  };
+
+  const handleApprove = async (task: Task) => {
+    setApprovingId(task.id);
+    try {
+      await tasksApi.approve(task.id);
+      loadTasks();
+    } catch (err: any) {
+      alert(err.message || "Failed to approve task.");
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectingTask) return;
+    setRejecting(true);
+    try {
+      await tasksApi.reject(rejectingTask.id, rejectReason.trim() || undefined);
+      setRejectingTask(null);
+      setRejectReason("");
+      loadTasks();
+    } catch (err: any) {
+      alert(err.message || "Failed to reject task.");
+    } finally {
+      setRejecting(false);
+    }
+  };
+
+  const pendingCount = tasks.filter((t) => t.approval_status === "PENDING").length;
+  const displayedTasks = pendingOnly ? tasks.filter((t) => t.approval_status === "PENDING") : tasks;
 
   return (
     <AppShell>
@@ -130,6 +192,10 @@ export default function TasksPage() {
           <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
           Overdue Only
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: pendingCount > 0 ? "#d97706" : "var(--color-text-muted)", cursor: "pointer", fontWeight: pendingCount > 0 ? 700 : 400 }}>
+          <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} />
+          Pending Approval Only {pendingCount > 0 && `(${pendingCount})`}
+        </label>
       </div>
 
       {/* Create Task Modal / Card */}
@@ -145,17 +211,17 @@ export default function TasksPage() {
           <form onSubmit={handleCreateTask} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div className="grid-2" style={{ gap: 12 }}>
               <div className="form-group">
-                <label className="form-label">Assign To Intern *</label>
+                <label className="form-label">Project *</label>
                 <select
                   className="form-select"
-                  value={selectedInternId}
-                  onChange={(e) => setSelectedInternId(e.target.value)}
+                  value={selectedProjectId}
+                  onChange={(e) => handleProjectChange(e.target.value)}
                   required
                 >
-                  <option value="">-- Select Intern --</option>
-                  {interns.map((i) => (
-                    <option key={i.user_id} value={i.user_id}>
-                      {i.full_name} ({i.company_email})
+                  <option value="">-- Select Project --</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.department ? ` (${p.department.name})` : ""}
                     </option>
                   ))}
                 </select>
@@ -171,6 +237,35 @@ export default function TasksPage() {
                   required
                 />
               </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Assign To Intern *</label>
+              <select
+                className="form-select"
+                value={selectedInternId}
+                onChange={(e) => setSelectedInternId(e.target.value)}
+                disabled={!selectedProjectId}
+                required
+              >
+                <option value="">
+                  {!selectedProjectId
+                    ? "-- Select a project first --"
+                    : assignableInterns.length === 0
+                    ? "No interns in this project's department"
+                    : "-- Select Intern --"}
+                </option>
+                {assignableInterns.map((i) => (
+                  <option key={i.user_id} value={i.user_id}>
+                    {i.full_name} ({i.company_email})
+                  </option>
+                ))}
+              </select>
+              {selectedProject?.department && (
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+                  Showing interns in {selectedProject.department.name} only, matching this project&apos;s department.
+                </p>
+              )}
             </div>
 
             <div className="form-group">
@@ -229,25 +324,27 @@ export default function TasksPage() {
 
       {loading ? (
         <div className="loading-overlay"><div className="spinner" /></div>
-      ) : tasks.length === 0 ? (
-        <div className="empty-state"><h3>No tasks found</h3></div>
+      ) : displayedTasks.length === 0 ? (
+        <div className="empty-state"><h3>{pendingOnly ? "No tasks pending approval" : "No tasks found"}</h3></div>
       ) : (
         <div className="table-wrapper">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Task</th>
+                <th>Project</th>
                 <th>Intern</th>
                 <th>Assigned By</th>
                 <th>Due Date</th>
                 <th>Priority</th>
                 <th>Status</th>
+                <th>Approval</th>
                 <th>Updates</th>
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id}>
+              {displayedTasks.map((task) => (
+                <tr key={task.id} style={task.approval_status === "PENDING" ? { background: "rgba(245, 158, 11, 0.05)" } : undefined}>
                   <td>
                     <div style={{ fontWeight: 500 }}>{task.title}</div>
                     {task.description && (
@@ -256,6 +353,7 @@ export default function TasksPage() {
                       </div>
                     )}
                   </td>
+                  <td style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{task.project_name || "—"}</td>
                   <td>{task.intern_name || "—"}</td>
                   <td>{task.assigned_by_name || "—"}</td>
                   <td>
@@ -263,6 +361,14 @@ export default function TasksPage() {
                   </td>
                   <td><StatusBadge status={task.priority} /></td>
                   <td><StatusBadge status={task.is_overdue ? "OVERDUE" : task.status} /></td>
+                  <td>
+                    <ApprovalCell
+                      task={task}
+                      approving={approvingId === task.id}
+                      onApprove={() => handleApprove(task)}
+                      onReject={() => { setRejectReason(""); setRejectingTask(task); }}
+                    />
+                  </td>
                   <td>
                     <button
                       className="btn btn-secondary btn-sm"
@@ -287,6 +393,35 @@ export default function TasksPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Reject Task Modal */}
+      {rejectingTask && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setRejectingTask(null); }}>
+          <div className="modal" style={{ maxWidth: 460 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <h2 className="modal-title" style={{ margin: 0 }}>Reject Task</h2>
+              <button type="button" onClick={() => setRejectingTask(null)} style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)", background: "transparent", cursor: "pointer", color: "var(--color-text-muted)", fontSize: 18 }}>×</button>
+            </div>
+            <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 12 }}>
+              Rejecting <strong>{rejectingTask.title}</strong> self-assigned by <strong>{rejectingTask.intern_name}</strong>. They&apos;ll be notified.
+            </p>
+            <label className="form-label">Reason (optional)</label>
+            <textarea
+              className="form-textarea"
+              rows={3}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="e.g. Duplicate of an existing task, out of scope for this sprint…"
+            />
+            <div className="modal-footer" style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setRejectingTask(null)}>Cancel</button>
+              <button type="button" className="btn btn-danger" disabled={rejecting} onClick={handleConfirmReject}>
+                {rejecting ? "Rejecting…" : "Reject Task"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -422,6 +557,65 @@ function TaskUpdatesModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function ApprovalCell({
+  task,
+  approving,
+  onApprove,
+  onReject,
+}: {
+  task: Task;
+  approving: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  if (task.approval_status === "APPROVED") {
+    // Nothing to review — keep the column quiet for the common case
+    // (admin/manager-assigned tasks are always already approved).
+    return <span style={{ fontSize: 12, color: "var(--color-text-dim)" }}>—</span>;
+  }
+
+  if (task.approval_status === "REJECTED") {
+    return (
+      <span
+        className="badge"
+        style={{ background: "rgba(239,68,68,0.12)", color: "#ef4444", fontSize: 11, fontWeight: 700, padding: "3px 8px" }}
+        title={task.rejection_reason || "Rejected"}
+      >
+        Rejected{task.rejection_reason ? " ⓘ" : ""}
+      </span>
+    );
+  }
+
+  // PENDING — a self-assigned task awaiting sign-off
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span className="badge" style={{ background: "rgba(245,158,11,0.14)", color: "#d97706", fontSize: 11, fontWeight: 700, padding: "3px 8px" }}>
+        Pending
+      </span>
+      <button
+        type="button"
+        className="btn btn-primary btn-sm"
+        style={{ padding: "3px 8px", fontSize: 11 }}
+        disabled={approving}
+        onClick={onApprove}
+        title="Approve this self-assigned task"
+      >
+        {approving ? "…" : "Approve"}
+      </button>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        style={{ padding: "3px 8px", fontSize: 11, color: "var(--color-danger)" }}
+        disabled={approving}
+        onClick={onReject}
+        title="Reject this self-assigned task"
+      >
+        Reject
+      </button>
     </div>
   );
 }
